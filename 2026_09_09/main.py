@@ -1,4 +1,15 @@
 """
+Autor: Mariscal Rodríguez Omar Jesús
+Materia: Algoritmos Metaheurísticos
+Profesor: Paredes López Ángel Ignasio
+Actividad 3 - Algoritmo Genético Continuo
+
+Universidad de Guadalajara
+Centro Universitario de Ciencias Exactas e Ingenierías
+
+------------------------------------------------------------------------
+
+
 main.py
 =======
 Orquesta la Actividad 3 en dos modos:
@@ -7,8 +18,7 @@ Orquesta la Actividad 3 en dos modos:
         Barrido de candidatos de (población, Pc, Pm) sobre Ackley 2D (mide
         capacidad de evadir mínimos locales / exploración) y Esfera 4D (mide
         precisión / explotación), con pocas corridas por combinación. Genera
-        una tabla comparativa para elegir manualmente la configuración final
-        (deliverable "Sintonización de Parámetros" del reporte).
+        una tabla comparativa para elegir manualmente la configuración final.
 
     --mode final:
         Corre la configuración elegida (pasada por CLI) con >= 30 corridas
@@ -16,10 +26,9 @@ Orquesta la Actividad 3 en dos modos:
         Esfera 4D y Esfera 10D. Genera tabla estadística (mejor, peor, media,
         desv. std, tasa de éxito), curvas de convergencia promedio por
         problema, y una gráfica comparativa Esfera 4D vs 10D (escalabilidad).
-        También imprime el cálculo del espacio de búsqueda binario (16 bits,
-        10 variables) para la pregunta de discusión del reporte.
 
-Para modificar en vivo (evaluación presencial):
+
+Para modificaciones al patrón de estrategia igual que la actividad anterior::
     - Cambiar operador de cruza/mutación/selección/manejo de límites: son
       flags de CLI que solo cambian GAConfig; ga_continuo.GeneticAlgorithm
       no requiere ningún otro cambio.
@@ -27,7 +36,7 @@ Para modificar en vivo (evaluación presencial):
       dentro de ga_continuo.py (SELECTION_OPERATORS / CROSSOVER_OPERATORS /
       MUTATION_OPERATORS / BOUNDARY_HANDLERS).
 
-Uso:
+Ejemplos de Uso:
     python main.py --mode tuning
     python main.py --mode final --population 60 --crossover-prob 0.9 --mutation-prob 0.1
     python main.py --mode final --runs 5   # corrida rápida de prueba
@@ -38,7 +47,7 @@ from __future__ import annotations
 import argparse
 import csv
 import dataclasses
-import itertools
+import itertools # Importación para hacer más eficientes los bucles para el modo de exploración o modo tuning
 import os
 import time
 from dataclasses import dataclass
@@ -53,7 +62,6 @@ from ga_continuo import (
     GeneticAlgorithm,
     ProblemSpec,
     RunResult,
-    binary_search_space_size,
     is_success,
     make_ackley_2d,
     make_sphere,
@@ -64,10 +72,12 @@ OUTPUT_DIR_DEFAULT = "resultados"
 N_RUNS_FINAL_DEFAULT = 30
 
 
-# ======================================================================
-# Utilidades comunes
-# ======================================================================
+"""
+Utilidades comunes
+____________________________________________________________
+"""
 
+# Crear los problemas con los contenedores de los problemas con las funciones auxiliares
 def build_problems() -> dict[str, ProblemSpec]:
     return {
         "ackley_2d": make_ackley_2d(),
@@ -75,12 +85,12 @@ def build_problems() -> dict[str, ProblemSpec]:
         "sphere_10d": make_sphere(10),
     }
 
-
+# Correr una sola corrida
 def run_single(problem: ProblemSpec, config: GAConfig, seed: int) -> RunResult:
     ga = GeneticAlgorithm(problem, config)
     return ga.run(rng=np.random.default_rng(seed))
 
-
+# Correr varias veces el algoritmo
 def run_many(problem: ProblemSpec, config: GAConfig, n_runs: int, base_seed: int) -> list[RunResult]:
     rng_seeder = np.random.default_rng(base_seed)
     results = []
@@ -98,11 +108,12 @@ def mean_convergence_curve(runs: list[RunResult], kind: str = "mean") -> np.ndar
     return padded.mean(axis=0)
 
 
-# ======================================================================
-# Modo TUNING
-# ======================================================================
+"""
+Modo TUNING
+____________________________________________________________
+"""
 
-@dataclass
+@dataclass # Contenedor de datos para la configuración del modo tuning
 class TuningRow:
     population: int
     crossover_prob: float
@@ -113,35 +124,35 @@ class TuningRow:
     success_rate: float | None
     mean_generations: float
 
-
+# Para la línea de comandos, separadores por comas de reales
 def parse_float_list(text: str) -> list[float]:
     return [float(v) for v in text.split(",")]
 
-
+# Para la lista de comandos, separadores por comas de enteros
 def parse_int_list(text: str) -> list[int]:
     return [int(v) for v in text.split(",")]
 
-
+# Ejecutar el modo tuning
 def run_tuning(args: argparse.Namespace) -> list[TuningRow]:
-    populations = parse_int_list(args.tuning_populations)
-    pcs = parse_float_list(args.tuning_pc)
-    pms = parse_float_list(args.tuning_pm)
+    populations = parse_int_list(args.tuning_populations) # El número de poblaciones a probar
+    pcs = parse_float_list(args.tuning_pc) # Probabilidad de cruces a probar
+    pms = parse_float_list(args.tuning_pm) # Probabiliaddes de mutaciones a probar
 
     tuning_problems = {
         "ackley_2d": make_ackley_2d(),        # exploración: evadir mínimos locales
         "sphere_4d": make_sphere(4),          # explotación: precisión
     }
 
-    rows: list[TuningRow] = []
-    combos = list(itertools.product(populations, pcs, pms))
-    total = len(combos) * len(tuning_problems)
-    i = 0
+    rows: list[TuningRow] = [] # Lista de resultados que almacenaremos
+    combos = list(itertools.product(populations, pcs, pms)) # Lista de combinaciones que almacenarmos utilizando itertolls
+    total = len(combos) * len(tuning_problems) # TOtal de combinaciones x problemas
+    i = 0 # Contador 
 
     print(f"Modo TUNING: {len(combos)} combinaciones x {len(tuning_problems)} problemas "
           f"x {args.tuning_runs} corridas = {total * args.tuning_runs} ejecuciones totales\n")
 
-    for pop, pc, pm in combos:
-        base_config = GAConfig(
+    for pop, pc, pm in combos: # Bucle principal que se recorre por cada combinación
+        base_config = GAConfig( # Creación de la configuración de un combo
             population_size=pop,
             crossover_prob=pc,
             mutation_prob=pm,
@@ -156,19 +167,19 @@ def run_tuning(args: argparse.Namespace) -> list[TuningRow]:
             success_tolerance=args.success_tolerance,
         )
 
-        for problem_name, problem in tuning_problems.items():
+        for problem_name, problem in tuning_problems.items(): # Bucle para las impresiones de cada problema para el combo
             i += 1
             print(f"[{i}/{len(combos) * len(tuning_problems)}] pop={pop} Pc={pc} Pm={pm} "
                   f"| {problem_name} -> {args.tuning_runs} corridas...", end="", flush=True)
-            t0 = time.time()
-            runs = run_many(problem, base_config, args.tuning_runs, base_seed=args.seed)
-            elapsed = time.time() - t0
+            t0 = time.time() # Medición del tiempo 
+            runs = run_many(problem, base_config, args.tuning_runs, base_seed=args.seed) # Correr tantas veces como pruebas pedidas
+            elapsed = time.time() - t0 # Tiempo de finalización
 
-            best_values = np.array([r.best_fitness for r in runs])
-            successes = [is_success(problem, v, args.success_tolerance) for v in best_values]
-            success_rate = float(np.mean(successes)) if all(s is not None for s in successes) else None
+            best_values = np.array([r.best_fitness for r in runs]) # Mejores valores obtenidos
+            successes = [is_success(problem, v, args.success_tolerance) for v in best_values] # Cuantos tuvieron éxito en relación al óptimo conocido
+            success_rate = float(np.mean(successes)) if all(s is not None for s in successes) else None # Porcentaje de casos exitosos
 
-            rows.append(
+            rows.append( # Agregar los resultados del combo/problema
                 TuningRow(
                     population=pop,
                     crossover_prob=pc,
@@ -184,7 +195,7 @@ def run_tuning(args: argparse.Namespace) -> list[TuningRow]:
 
     return rows
 
-
+#Impresion de resultados de tuning
 def print_tuning_table(rows: list[TuningRow]) -> None:
     header = (f"{'Pob':>5} {'Pc':>5} {'Pm':>6} {'Problema':<12} "
               f"{'Media mejor':>12} {'Desv.Std':>10} {'% Éxito':>9} {'Gen. media':>10}")
@@ -197,7 +208,7 @@ def print_tuning_table(rows: list[TuningRow]) -> None:
             f"{r.mean_best:>12.6f} {r.std_best:>10.6f} {success_str:>9} {r.mean_generations:>10.1f}"
         )
 
-
+#Exportación de la tabla de prueba
 def export_tuning_csv(rows: list[TuningRow], path: str) -> None:
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -210,15 +221,15 @@ def export_tuning_csv(rows: list[TuningRow], path: str) -> None:
                 f"{r.mean_generations:.2f}",
             ])
     print(f"\nTabla de sintonización exportada a: {path}")
-    print("Revisa la tabla y elige la combinación con mejor balance entre "
-          "'media mejor'/'% éxito' en ambos problemas; luego corre --mode final "
-          "con esos valores de --population / --crossover-prob / --mutation-prob.")
 
 
-# ======================================================================
-# Modo FINAL
-# ======================================================================
 
+"""
+Modo FINAL
+____________________________________________________________
+"""
+
+#Contenedor de datos para la corrida del algoritmo
 @dataclass
 class StatsRow:
     problem_name: str
@@ -229,7 +240,7 @@ class StatsRow:
     success_rate: float | None
     mean_generations: float
 
-
+# Calcular estadísticas
 def compute_stats(problem: ProblemSpec, runs: list[RunResult], tolerance: float) -> StatsRow:
     values = np.array([r.best_fitness for r in runs])
     successes = [is_success(problem, v, tolerance) for v in values]
@@ -244,7 +255,7 @@ def compute_stats(problem: ProblemSpec, runs: list[RunResult], tolerance: float)
         mean_generations=float(np.mean([r.generations_run for r in runs])),
     )
 
-
+# Impresiones
 def print_stats_table(rows: list[StatsRow]) -> None:
     header = f"{'Problema':<12} {'Mejor':>12} {'Peor':>12} {'Media':>12} {'Desv.Std':>12} {'% Éxito':>9} {'Gen.media':>10}"
     print("\n" + header)
@@ -256,7 +267,7 @@ def print_stats_table(rows: list[StatsRow]) -> None:
             f"{r.std:>12.6f} {success_str:>9} {r.mean_generations:>10.1f}"
         )
 
-
+# Exportar la tabla de resultados
 def export_stats_csv(rows: list[StatsRow], path: str) -> None:
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -269,7 +280,7 @@ def export_stats_csv(rows: list[StatsRow], path: str) -> None:
             ])
     print(f"\nTabla estadística exportada a: {path}")
 
-
+#Graficar convergencia
 def plot_convergence(problem_name: str, runs: list[RunResult], output_path: str, config_label: str) -> None:
     fig, ax = plt.subplots(figsize=(10, 6))
     mean_curve = mean_convergence_curve(runs, kind="mean")
@@ -288,12 +299,11 @@ def plot_convergence(problem_name: str, runs: list[RunResult], output_path: str,
     plt.close(fig)
     print(f"Gráfica de convergencia guardada: {output_path}")
 
-
+# Graficar la convergencia promedio
 def plot_sphere_scalability(
     runs_4d: list[RunResult], runs_10d: list[RunResult], output_path: str, config_label: str
 ) -> None:
-    """Gráfica comparativa de convergencia promedio: Esfera 4D vs 10D
-    (deliverable 'Prueba de Escalabilidad' del reporte)."""
+    """Gráfica comparativa de convergencia promedio: Esfera 4D vs 10D"""
     fig, ax = plt.subplots(figsize=(10, 6))
 
     curve_4d = mean_convergence_curve(runs_4d, kind="best")
@@ -313,9 +323,9 @@ def plot_sphere_scalability(
     plt.close(fig)
     print(f"Gráfica de escalabilidad (4D vs 10D) guardada: {output_path}")
 
-
+# Algoritmo final con los hiperparámetros elegidos
 def run_final(args: argparse.Namespace) -> None:
-    config = GAConfig(
+    config = GAConfig( # Creación de las configuraciones
         population_size=args.population,
         max_generations=args.max_generations,
         crossover_prob=args.crossover_prob,
@@ -333,7 +343,7 @@ def run_final(args: argparse.Namespace) -> None:
         diversity_epsilon=args.diversity_epsilon,
         success_tolerance=args.success_tolerance,
     )
-    config_label = (
+    config_label = ( # Impresiones 
         f"pop={config.population_size}, Pc={config.crossover_prob}, Pm={config.mutation_prob}, "
         f"sel={config.selection}, cruza={config.crossover}, mut={config.mutation}, "
         f"límites={config.boundary_handling}"
@@ -349,7 +359,7 @@ def run_final(args: argparse.Namespace) -> None:
     all_runs: dict[str, list[RunResult]] = {}
     stats_rows: list[StatsRow] = []
 
-    for name, problem in problems.items():
+    for name, problem in problems.items(): # Bublce principal por cada problema 
         print(f"\nEjecutando {name} ({args.runs} corridas)...", end="", flush=True)
         t0 = time.time()
         runs = run_many(problem, config, args.runs, base_seed=args.seed)
@@ -358,12 +368,12 @@ def run_final(args: argparse.Namespace) -> None:
 
         all_runs[name] = runs
         stats_rows.append(compute_stats(problem, runs, args.success_tolerance))
-
+    #Imprimir los resultados
     print_stats_table(stats_rows)
-
+    #Exportar la tabla
     os.makedirs(args.output_dir, exist_ok=True)
     export_stats_csv(stats_rows, os.path.join(args.output_dir, "tabla_estadistica_continuo.csv"))
-
+    
     for name, runs in all_runs.items():
         plot_convergence(
             name, runs, os.path.join(args.output_dir, f"convergencia_{name}.png"), config_label
@@ -375,21 +385,13 @@ def run_final(args: argparse.Namespace) -> None:
         config_label,
     )
 
-    # --- Discusión analítica: espacio de búsqueda binario (16 bits, 10 vars) ---
-    space_size = binary_search_space_size(bits_per_var=16, n_vars=10)
-    print("\n" + "=" * 70)
-    print("Dato para la discusión analítica del reporte:")
-    print(f"Espacio de búsqueda binario con 16 bits/variable y 10 variables: "
-          f"2^(16*10) = 2^160 = {space_size:.6e} combinaciones posibles")
-    print("=" * 70)
-
     print("\nExperimento final completo. Resultados en:", os.path.abspath(args.output_dir))
 
 
-# ======================================================================
-# CLI / punto de entrada
-# ======================================================================
-
+"""
+CLI / punto de entrada
+____________________________________________________________
+"""
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Actividad 3 - GA Continuo: tuning y experimento final")
     parser.add_argument("--mode", type=str, default="final", choices=["tuning", "final"])
@@ -427,17 +429,17 @@ def parse_args() -> argparse.Namespace:
 
     return parser.parse_args()
 
-
+# Función Principal
 def main() -> None:
     args = parse_args()
 
-    if args.mode == "tuning":
+    if args.mode == "tuning": # Si se hará el modo de prueba o tuning
         rows = run_tuning(args)
         print_tuning_table(rows)
         os.makedirs(args.output_dir, exist_ok=True)
         export_tuning_csv(rows, os.path.join(args.output_dir, "tabla_sintonizacion.csv"))
     else:
-        run_final(args)
+        run_final(args) # Si el modo es el final
 
 
 if __name__ == "__main__":
