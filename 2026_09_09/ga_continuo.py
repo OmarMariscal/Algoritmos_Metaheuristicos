@@ -1,13 +1,23 @@
 """
+Autor: Mariscal Rodríguez Omar Jesús
+Materia: Algoritmos Metaheurísticos
+Profesor: Paredes López Ángel Ignasio
+Actividad 3 - Algoritmo Genético Continuo
+
+Universidad de Guadalajara
+Centro Universitario de Ciencias Exactas e Ingenierías
+
+------------------------------------------------------------------------
+
 ga_continuo.py
-===============
-Motor de un Algoritmo Genético Continuo (representación real, punto flotante)
+
+Motor de un Algoritmo Genético Continuo (representación real, punto flotante en lugar de bits como el algoritmo genético binario)
 para minimización de funciones con dominio restringido tipo caja.
 
-Arquitectura (mismo espíritu que la Actividad 2 - ga_binario.py):
+Arquitectura (misma idea  que la Actividad 2):
     - GAConfig / ProblemSpec: dataclasses que centralizan la parametrización.
-    - Sin "Encoding" binario: los individuos SON directamente vectores de
-      floats (n_vars,), acotados a su dominio.
+    - Sin "Encoding" binario: los individuos son directamente vectores de
+      floats (n_vars,), acotados a su dominio. No es necesario codificar y por ende, decodificar
     - Operadores (selección, cruza, mutación, manejo de límites): Protocol +
       registry, intercambiables por nombre en GAConfig sin tocar el motor.
     - StoppingCriterion: paro fuerte (máx. generaciones), paro débil
@@ -24,10 +34,10 @@ Operadores continuos implementados (todos vectorizados con NumPy):
           uniformemente en un intervalo ampliado alrededor de los padres,
           lo que favorece la exploración (útil para evadir mínimos locales
           en funciones multimodales como Ackley).
-        - Uniforme real: cada gen se hereda de un padre u otro (sin mezcla),
+        - Uniforme real (El visto en clase): cada gen se hereda de un padre u otro (sin mezcla),
           análogo continuo del cruce uniforme discreto.
     Mutación:
-        - Gaussiana: a cada gen, con probabilidad Pm, se le suma ruido
+        - Gaussiana (La vista en clase): a cada gen, con probabilidad Pm, se le suma ruido
           N(0, sigma), con sigma proporcional al rango de esa variable.
         - Reinicio aleatorio (uniforme): con probabilidad Pm, el gen se
           reemplaza por un valor aleatorio uniforme dentro de su dominio
@@ -38,23 +48,23 @@ Operadores continuos implementados (todos vectorizados con NumPy):
         - Resampling: si el valor cae fuera, se reemplaza por un valor
           aleatorio uniforme dentro del dominio.
 
-Autor: Actividad 3 - Algoritmos Metaheurísticos (CUCEI, UdeG)
 """
 
-from __future__ import annotations
+from __future__ import annotations # Para soluciuonar importaciones circulares
 
-from dataclasses import dataclass, field
-from typing import Callable, Protocol, Sequence
+from dataclasses import dataclass, field # Para contenedores de datos
+from typing import Callable, Protocol, Sequence # Para la arquitectura por Patrón de Estrategia
 
-import numpy as np
-from numpy.random import Generator
+import numpy as np # Cálculos Vecotiales Optimizados
+from numpy.random import Generator # Para el manejo de números aleatorios y semillas
 
 
-# ======================================================================
-# 1. Especificación del problema (función objetivo + dominio)
-# ======================================================================
+"""
+1. Especificación del problema (función objetivo + dominio)
+____________________________________________________________
+"""
 
-@dataclass(frozen=True)
+@dataclass(frozen=True) # Las especificaciones del Problema son inmutables una vez se declaran 
 class ProblemSpec:
     """Describe un problema de minimización con dominio tipo caja.
 
@@ -78,12 +88,11 @@ class ProblemSpec:
 
 
 def _ackley(x: np.ndarray) -> np.ndarray:
-    """Función de Ackley (2D): x, y en [-5, 5]. Óptimo global f(0,0) = 0.
-    Misma función que en la Actividad 2, para comparación directa."""
-    xv, yv = x[:, 0], x[:, 1]
-    term1 = -20.0 * np.exp(-0.2 * np.sqrt((xv**2 + yv**2) / 2.0))
-    term2 = -np.exp((np.cos(2 * np.pi * xv) + np.cos(2 * np.pi * yv)) / 2.0)
-    return np.e + term1 + term2 + 20.0
+    """f(x, y): función tipo Ackley, x, y"""
+    xv, yv = x[:, 0], x[:, 1] #Extracción de las variables
+    term1 = -20.0 * np.exp(-0.2 * np.sqrt((xv**2 + yv**2) / 2.0)) #Primer término de la función
+    term2 = -np.exp((np.cos(2 * np.pi * xv) + np.cos(2 * np.pi * yv)) / 2.0) #Segundo término de la función
+    return np.e + term1 + term2 + 20.0 #Forma final de la función ackley
 
 
 def _sphere(x: np.ndarray) -> np.ndarray:
@@ -92,24 +101,27 @@ def _sphere(x: np.ndarray) -> np.ndarray:
 
 
 def make_ackley_2d() -> ProblemSpec:
-    """Construye el problema Ackley 2D, x, y en [-5, 5]."""
+    """Construye el problema Ackley 2D, x, y en [-5, 5].
+        Solo simplifica un poco la definición del código más adelante"""
     return ProblemSpec(name="ackley_2d", func=_ackley, bounds=[(-5.0, 5.0), (-5.0, 5.0)], known_optimum=0.0)
 
 
 def make_sphere(n_dims: int) -> ProblemSpec:
-    """Construye el problema Esfera para `n_dims` variables, xi en [-5.12, 5.12]."""
+    """Construye el problema Esfera N-dimensional en x, y, ... n[(-5.12, 5.12), ...]"""
     bounds = [(-5.12, 5.12)] * n_dims
     return ProblemSpec(name=f"sphere_{n_dims}d", func=_sphere, bounds=bounds, known_optimum=0.0)
 
 
-# ======================================================================
-# 2. Configuración del algoritmo
-# ======================================================================
+
+"""
+2. Configuración del algoritmo
+____________________________________________________________
+"""
 
 @dataclass
 class GAConfig:
     """Hiperparámetros y opciones del GA continuo. Un único objeto que
-    viaja por todo el motor, para facilitar cambios en vivo.
+    viaja por todo el motor, para facilitar cambios por el patrón de estrategia.
 
     Attributes:
         population_size: Tamaño de la población.
@@ -136,7 +148,7 @@ class GAConfig:
             considera que la población colapsó (convergencia prematura).
             0.0 = desactivado (default), pensado como herramienta de
             diagnóstico/paro adicional configurable si se solicita en vivo.
-        success_tolerance: Tolerancia |f_encontrado - f_óptimo| para éxito.
+        success_tolerance: Tolerancia |f_encontrado - f_óptimo| para éxito cuando se conoce el límite óptimo.
         seed: Semilla para reproducibilidad.
     """
 
@@ -159,10 +171,12 @@ class GAConfig:
     seed: int | None = None
 
 
-# ======================================================================
-# 3. Manejo de límites (dominio tipo caja)
-# ======================================================================
+"""
+3. Manejo de límites (dominio tipo caja)
+____________________________________________________________
+"""
 
+# Protocolo/Contrato del manejo de límites
 class BoundaryHandler(Protocol):
     def __call__(self, values: np.ndarray, low: np.ndarray, high: np.ndarray, rng: Generator) -> np.ndarray:
         """Corrige `values` (n_pop, n_vars) para que respeten [low, high] por columna."""
@@ -199,18 +213,19 @@ def handle_resample(values: np.ndarray, low: np.ndarray, high: np.ndarray, rng: 
         result = np.where(out_of_bounds, random_vals, result)
     return result
 
-
+# Listado de estrategias disponibles para el manejo de límites
 BOUNDARY_HANDLERS: dict[str, BoundaryHandler] = {
     "clip": handle_clip,
     "reflect": handle_reflect,
     "resample": handle_resample,
 }
 
-
-# ======================================================================
+"""
 # 4. Operadores genéticos continuos (Protocol + registry -> intercambiables)
-# ======================================================================
+____________________________________________________________
+"""
 
+# Contrato del Operador de Selección
 class SelectionOperator(Protocol):
     def __call__(
         self, population: np.ndarray, fitness: np.ndarray, n_select: int, rng: Generator, config: GAConfig
@@ -218,7 +233,7 @@ class SelectionOperator(Protocol):
         """Devuelve índices (n_select,) de individuos seleccionados como padres."""
         ...
 
-
+#Contrato del Operador de Cruce
 class CrossoverOperator(Protocol):
     def __call__(
         self, parent_a: np.ndarray, parent_b: np.ndarray, rng: Generator, config: GAConfig
@@ -226,7 +241,7 @@ class CrossoverOperator(Protocol):
         """Cruza dos vectores reales y devuelve dos hijos (mismo tamaño)."""
         ...
 
-
+# Contrato para el Operador de Mutación
 class MutationOperator(Protocol):
     def __call__(
         self, chromosome: np.ndarray, low: np.ndarray, high: np.ndarray, rng: Generator, config: GAConfig
@@ -249,25 +264,25 @@ def select_roulette(
     population: np.ndarray, fitness: np.ndarray, n_select: int, rng: Generator, config: GAConfig
 ) -> np.ndarray:
     """Selección por ruleta (proporcional a la aptitud)."""
-    adjusted = _fitness_from_minimization(fitness)
-    probs = adjusted / adjusted.sum()
-    return rng.choice(len(population), size=n_select, replace=True, p=probs)
+    adjusted = _fitness_from_minimization(fitness) # Pasar el fitness a una aptitud donde los más altos son los mejores (los mínimos)
+    probs = adjusted / adjusted.sum() # Pasar a probabilidades
+    return rng.choice(len(population), size=n_select, replace=True, p=probs) # Elección de n padres
 
 
 def select_tournament(
     population: np.ndarray, fitness: np.ndarray, n_select: int, rng: Generator, config: GAConfig
 ) -> np.ndarray:
     """Selección por torneo de tamaño k (config.tournament_k)."""
-    k = max(2, config.tournament_k)
-    n_pop = len(population)
-    selected = np.empty(n_select, dtype=np.int64)
+    k = max(2, config.tournament_k) # Número de concursantes
+    n_pop = len(population) # Número de Población
+    selected = np.empty(n_select, dtype=np.int64) # Vector vacío de selección
     for i in range(n_select):
-        contenders = rng.integers(0, n_pop, size=k)
-        winner = contenders[np.argmin(fitness[contenders])]
-        selected[i] = winner
+        contenders = rng.integers(0, n_pop, size=k) # Elección aleatoria de los competidores
+        winner = contenders[np.argmin(fitness[contenders])] # El mínimo es el que gana el torneo
+        selected[i] = winner # Se agrega al vector de los ganadores
     return selected
 
-
+# Registro de los operadores de selección
 SELECTION_OPERATORS: dict[str, SelectionOperator] = {
     "roulette": select_roulette,
     "tournament": select_tournament,
@@ -279,7 +294,7 @@ SELECTION_OPERATORS: dict[str, SelectionOperator] = {
 def crossover_arithmetic(
     parent_a: np.ndarray, parent_b: np.ndarray, rng: Generator, config: GAConfig
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Cruza aritmética (whole arithmetic crossover):
+    """Cruza aritmética:
         hijo1 = alpha * padre_a + (1 - alpha) * padre_b
         hijo2 = alpha * padre_b + (1 - alpha) * padre_a
     con un único `alpha` (config.crossover_alpha) aplicado a todo el vector.
@@ -297,7 +312,7 @@ def crossover_arithmetic(
 def crossover_blx_alpha(
     parent_a: np.ndarray, parent_b: np.ndarray, rng: Generator, config: GAConfig
 ) -> tuple[np.ndarray, np.ndarray]:
-    """BLX-alpha (blend crossover, Eshelman & Schaffer 1993).
+    """BLX-alpha.
 
     Para cada gen i, sea cmin = min(a_i, b_i), cmax = max(a_i, b_i),
     d = cmax - cmin. Cada gen del hijo se muestrea uniformemente en:
@@ -323,6 +338,7 @@ def crossover_blx_alpha(
     return child_a, child_b
 
 
+#El por defecto por se visto en clase
 def crossover_uniform_real(
     parent_a: np.ndarray, parent_b: np.ndarray, rng: Generator, config: GAConfig
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -332,12 +348,12 @@ def crossover_uniform_real(
     if rng.random() >= config.crossover_prob:
         return parent_a.copy(), parent_b.copy()
 
-    mask = rng.integers(0, 2, size=len(parent_a)).astype(bool)
-    child_a = np.where(mask, parent_a, parent_b)
-    child_b = np.where(mask, parent_b, parent_a)
+    mask = rng.integers(0, 2, size=len(parent_a)).astype(bool) # Probabilidad de heredar por cada gen
+    child_a = np.where(mask, parent_a, parent_b) # El hijo A hereda del padre A de primero y cuando no se llega al porcentaje de mutación del padre B
+    child_b = np.where(mask, parent_b, parent_a) # El hijo B hace exactamente lo contrario
     return child_a, child_b
 
-
+# Registro con los operadores de cruce
 CROSSOVER_OPERATORS: dict[str, CrossoverOperator] = {
     "arithmetic": crossover_arithmetic,
     "blx_alpha": crossover_blx_alpha,
@@ -357,12 +373,12 @@ def mutate_gaussian(
     variable (para que el mismo Pm/sigma_frac tenga un efecto comparable
     en dominios de distinto tamaño, ej. Ackley [-5,5] vs Esfera [-5.12,5.12])."""
     mutated = chromosome.copy()
-    do_mutate = rng.random(len(chromosome)) < config.mutation_prob
+    do_mutate = rng.random(len(chromosome)) < config.mutation_prob # Probabilidad de mutación por cada gen 
     if not do_mutate.any():
         return mutated
 
-    sigma = config.mutation_sigma_frac * (high - low)
-    noise = rng.normal(loc=0.0, scale=sigma)
+    sigma = config.mutation_sigma_frac * (high - low) # Calculo del sigma o magnitud del ruido
+    noise = rng.normal(loc=0.0, scale=sigma) # Generar el ruido aleatoriamente con la distribución de gauss. Media en 0 y desviación estandar igual a sigma
     mutated[do_mutate] = mutated[do_mutate] + noise[do_mutate]
     return mutated
 
@@ -390,14 +406,15 @@ MUTATION_OPERATORS: dict[str, MutationOperator] = {
 }
 
 
-# ======================================================================
+"""
 # 5. Criterios de paro (combinables: fuerte + débil + diversidad opcional)
-# ======================================================================
+____________________________________________________________
+"""
 
+# Contrato para el Criterio de Paro
 class StoppingCriterion(Protocol):
     def should_stop(self, generation: int, best_history: list[float], population: np.ndarray) -> bool:
         ...
-
 
 @dataclass
 class MaxGenerationsStopping:
@@ -464,10 +481,12 @@ def build_stopping_criterion(config: GAConfig, bounds: np.ndarray) -> CombinedSt
     )
 
 
-# ======================================================================
-# 6. Resultado de una corrida
-# ======================================================================
+"""
+6. Resultado de una corrida
+____________________________________________________________
+"""
 
+# Contenedor de datos de una corrida
 @dataclass
 class RunResult:
     """Resultado de una corrida completa del GA continuo."""
@@ -483,10 +502,10 @@ class RunResult:
 GenerationCallback = Callable[[int, np.ndarray, np.ndarray], None]
 
 
-# ======================================================================
+"""
 # 7. Motor evolutivo (agnóstico de los operadores concretos)
-# ======================================================================
-
+____________________________________________________________
+"""
 class GeneticAlgorithm:
     """Motor del Algoritmo Genético Continuo. Obtiene los operadores
     concretos de los registries según `config`, por lo que cambiar de
@@ -494,17 +513,19 @@ class GeneticAlgorithm:
     de GAConfig, sin tocar esta clase."""
 
     def __init__(self, problem: ProblemSpec, config: GAConfig) -> None:
-        self.problem = problem
-        self.config = config
-        self.low = np.array([b[0] for b in problem.bounds], dtype=np.float64)
-        self.high = np.array([b[1] for b in problem.bounds], dtype=np.float64)
+        self.problem = problem # Problema
+        self.config = config # Configuraciones
+        self.low = np.array([b[0] for b in problem.bounds], dtype=np.float64) # Array con los mínimos de cada variable
+        self.high = np.array([b[1] for b in problem.bounds], dtype=np.float64) # Array con los máximos de cada variable
         self.bounds_arr = np.array(problem.bounds, dtype=np.float64)  # (n_vars, 2)
 
-        self.selection_fn = self._lookup(SELECTION_OPERATORS, config.selection, "selección")
-        self.crossover_fn = self._lookup(CROSSOVER_OPERATORS, config.crossover, "cruza")
-        self.mutation_fn = self._lookup(MUTATION_OPERATORS, config.mutation, "mutación")
-        self.boundary_fn = self._lookup(BOUNDARY_HANDLERS, config.boundary_handling, "manejo de límites")
+        # Patrón de estrategia
+        self.selection_fn = self._lookup(SELECTION_OPERATORS, config.selection, "selección")  # Selección
+        self.crossover_fn = self._lookup(CROSSOVER_OPERATORS, config.crossover, "cruza") # Cruce
+        self.mutation_fn = self._lookup(MUTATION_OPERATORS, config.mutation, "mutación") # Mutación
+        self.boundary_fn = self._lookup(BOUNDARY_HANDLERS, config.boundary_handling, "manejo de límites") # Manejo de límites
 
+    # Verificar que la selección de estrategia existe
     @staticmethod
     def _lookup(registry: dict, key: str, label: str):
         try:
@@ -512,47 +533,55 @@ class GeneticAlgorithm:
         except KeyError as e:
             raise ValueError(f"Operador de {label} '{key}' no registrado. Disponibles: {list(registry)}") from e
 
+    # Crear una población aleatoria
     def _random_population(self, size: int, rng: Generator) -> np.ndarray:
         return self.low + rng.random((size, self.problem.n_vars)) * (self.high - self.low)
 
+    # Evaluar la población para obtener su fitness
     def _evaluate(self, population: np.ndarray) -> np.ndarray:
         return self.problem.func(population)
 
+    # Ejecución de una corrida del algoritmo
     def run(self, rng: Generator | None = None, callback: GenerationCallback | None = None) -> RunResult:
         """Ejecuta el GA continuo completo. Ver GeneticAlgorithm.run en
         ga_binario.py para la contraparte binaria (misma filosofía)."""
-        rng = rng if rng is not None else np.random.default_rng(self.config.seed)
-        stopping = build_stopping_criterion(self.config, self.bounds_arr)
+        rng = rng if rng is not None else np.random.default_rng(self.config.seed) # Motor aleatorio con una semilla preconfigurada
+        stopping = build_stopping_criterion(self.config, self.bounds_arr) # Creación del criterio de paro 
 
-        population = self._random_population(self.config.population_size, rng)
-        fitness = self._evaluate(population)
+        population = self._random_population(self.config.population_size, rng) # Creación de población aleatoria
+        fitness = self._evaluate(population) # Evaluar la población aleatoria
 
+        # Diccionarios de datos
         convergence_best: list[float] = []
         convergence_mean: list[float] = []
 
-        generation = 0
-        stopped_reason = "max_generations"
+        generation = 0 # Número de generaciones
+        stopped_reason = "max_generations" # Razón por defecto de paro
 
         while True:
+            # Obtener la media y el mejor 
             convergence_best.append(float(fitness.min()))
             convergence_mean.append(float(fitness.mean()))
 
+            # Función opcional para logs
             if callback is not None:
                 callback(generation, population, fitness)
 
+            # Bublce principal con criterior previamente definidos
             if stopping.should_stop(generation, convergence_best, population):
-                if generation >= self.config.max_generations:
+                if generation >= self.config.max_generations: # Paro por máximo de generaciones
                     stopped_reason = "max_generations"
                 elif self.config.diversity_epsilon > 0 and self._diversity_collapsed(population):
-                    stopped_reason = "diversity_collapse"
+                    stopped_reason = "diversity_collapse" # Paro por colapso de diversidad
                 else:
-                    stopped_reason = "stagnation"
+                    stopped_reason = "stagnation" # Paro por estancamiento
                 break
 
-            population, fitness = self._next_generation(population, fitness, rng)
-            generation += 1
+            population, fitness = self._next_generation(population, fitness, rng) # Obtenemos la nueva generación (Método más adelante)
+            generation += 1 # Conteo de generaciones
 
-        best_idx = int(np.argmin(fitness))
+        best_idx = int(np.argmin(fitness)) # El mejor individuo registrado
+        # Retornamos el contenedor de datos RunResult
         return RunResult(
             best_x=population[best_idx].copy(),
             best_fitness=float(fitness[best_idx]),
@@ -562,44 +591,46 @@ class GeneticAlgorithm:
             stopped_reason=stopped_reason,
         )
 
+    """Diversidad Colapsada detiene el algoritmo si los individuos son muy similares entre ellos"""    
     def _diversity_collapsed(self, population: np.ndarray) -> bool:
-        ranges = self.bounds_arr[:, 1] - self.bounds_arr[:, 0]
-        normalized_std = (population.std(axis=0) / ranges).mean()
-        return bool(normalized_std < self.config.diversity_epsilon)
+        ranges = self.bounds_arr[:, 1] - self.bounds_arr[:, 0] # Rango en los límites de cada variable
+        normalized_std = (population.std(axis=0) / ranges).mean() # Media de la desbiación estandar de la población / rangos
+        return bool(normalized_std < self.config.diversity_epsilon) # Si es menor al límite de diversidad el algoritmo para
 
     def _next_generation(
         self, population: np.ndarray, fitness: np.ndarray, rng: Generator
     ) -> tuple[np.ndarray, np.ndarray]:
-        n_pop = len(population)
-        config = self.config
+        n_pop = len(population) # Número de individuos
+        config = self.config # Condiguraciones
 
         # --- Elitismo ---
-        elite_count = max(0, min(config.elitism, n_pop))
-        elite_idx = np.argsort(fitness)[:elite_count]
-        new_population = [population[i].copy() for i in elite_idx]
+        elite_count = max(0, min(config.elitism, n_pop)) # El número de elites
+        elite_idx = np.argsort(fitness)[:elite_count] # Índices de los N mejores 
+        new_population = [population[i].copy() for i in elite_idx] # Pasan directo a la nueva población
 
         # --- Reproducción ---
-        while len(new_population) < n_pop:
-            parents_idx = self.selection_fn(population, fitness, 2, rng, config)
-            parent_a, parent_b = population[parents_idx[0]], population[parents_idx[1]]
+        while len(new_population) < n_pop: # Hasta llenar la nueva pobación
+            parents_idx = self.selection_fn(population, fitness, 2, rng, config) # Obtenemos el índice de los padres por el método de selección
+            parent_a, parent_b = population[parents_idx[0]], population[parents_idx[1]] # Obtenemos el valor de los padres
 
-            child_a, child_b = self.crossover_fn(parent_a, parent_b, rng, config)
-            child_a = self.mutation_fn(child_a, self.low, self.high, rng, config)
-            child_b = self.mutation_fn(child_b, self.low, self.high, rng, config)
+            child_a, child_b = self.crossover_fn(parent_a, parent_b, rng, config) # Hacemos la cruza
+            child_a = self.mutation_fn(child_a, self.low, self.high, rng, config) # Mutamos el hijo A
+            child_b = self.mutation_fn(child_b, self.low, self.high, rng, config) # Mutamos el hijo B
 
-            new_population.append(child_a)
-            if len(new_population) < n_pop:
+            new_population.append(child_a) # Agregamos el Hijo A
+            if len(new_population) < n_pop: # Si aún cabe, agregamos el hijo B
                 new_population.append(child_b)
 
-        new_population_arr = np.array(new_population, dtype=np.float64)
-        new_population_arr = self.boundary_fn(new_population_arr, self.low, self.high, rng)
-        new_fitness = self._evaluate(new_population_arr)
-        return new_population_arr, new_fitness
+        new_population_arr = np.array(new_population, dtype=np.float64) # Devolveremos otro arreglo para conservar historial
+        new_population_arr = self.boundary_fn(new_population_arr, self.low, self.high, rng) # Aplicamos la estretegia seleccionada para mantenernos en el límite de la caja
+        new_fitness = self._evaluate(new_population_arr) # Evaluamos el nuevo fitness
+        return new_population_arr, new_fitness # Retornamos la población clippeada y el fitness
 
 
-# ======================================================================
-# 8. Utilidad de éxito
-# ======================================================================
+"""
+8. Utilidad de éxito
+____________________________________________________________
+"""
 
 def is_success(problem: ProblemSpec, best_fitness: float, tolerance: float) -> bool | None:
     """Determina si una corrida fue "exitosa" comparando contra el óptimo
@@ -607,14 +638,3 @@ def is_success(problem: ProblemSpec, best_fitness: float, tolerance: float) -> b
     if problem.known_optimum is None:
         return None
     return abs(best_fitness - problem.known_optimum) < tolerance
-
-
-# ======================================================================
-# 9. Utilidad para la discusión analítica del reporte
-# ======================================================================
-
-def binary_search_space_size(bits_per_var: int, n_vars: int) -> int:
-    """Calcula el tamaño del espacio de búsqueda binario total
-    (2 ** (bits_per_var * n_vars)), para la pregunta de discusión sobre
-    codificación binaria vs continua en problemas multivariables."""
-    return 2 ** (bits_per_var * n_vars)
