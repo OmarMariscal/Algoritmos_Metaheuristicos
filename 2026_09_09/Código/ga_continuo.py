@@ -96,9 +96,20 @@ def _ackley(x: np.ndarray) -> np.ndarray:
 
 
 def _sphere(x: np.ndarray) -> np.ndarray:
-    """Función Esfera N-dimensional: f(x) = sum(xi^2). Óptimo global f(0,...,0) = 0."""
+    """Función Esfera N-dimensional: f(x) = sum(xi^2). Óptimo global f(0) = 0."""
     return np.sum(x**2, axis=1)
 
+def _sphere_modify(x: np.array) -> np.ndarray:
+    """Función Esfera dsplazada:  f(x) = sum((xi-3)^2). Óptimo global f(0) = -3."""
+    x = np.atleast_2d(x)
+    return np.sum((x-3)**2, axis=1)
+
+def _maximun_sphere(x:np.array) -> np.ndarray:
+    """División de la esfera modificada"""
+    sphere_modi = _sphere_modify(x)
+    epsilon = 1e-8
+    return -(1/(1+sphere_modi + epsilon))
+    
 
 def make_ackley_2d() -> ProblemSpec:
     """Construye el problema Ackley 2D, x, y en [-5, 5].
@@ -111,7 +122,13 @@ def make_sphere(n_dims: int) -> ProblemSpec:
     bounds = [(-5.12, 5.12)] * n_dims
     return ProblemSpec(name=f"sphere_{n_dims}d", func=_sphere, bounds=bounds, known_optimum=0.0)
 
+def make_displaced(n_dims: int) -> ProblemSpec:
+    bounds = [(-10,10)] * n_dims
+    return ProblemSpec(name=f"displaced_sphere_{n_dims}", func=_sphere_modify, bounds=bounds, known_optimum=-3)
 
+def make_maximun_sphere(n_dims: int) -> ProblemSpec: 
+    bounds = [(-10,10)] * n_dims
+    return ProblemSpec(name= f"maximun_displaced_sphere_{n_dims}", func=_maximun_sphere, bounds=bounds)
 
 """
 2. Configuración del algoritmo
@@ -537,6 +554,9 @@ class GeneticAlgorithm:
     def _random_population(self, size: int, rng: Generator) -> np.ndarray:
         return self.low + rng.random((size, self.problem.n_vars)) * (self.high - self.low)
 
+    def _defined_population(self, size: int, rng: Generator) -> np.ndarray:
+        return np.full((size, self.problem.n_vars), -3, dtype=float)
+
     # Evaluar la población para obtener su fitness
     def _evaluate(self, population: np.ndarray) -> np.ndarray:
         return self.problem.func(population)
@@ -548,7 +568,7 @@ class GeneticAlgorithm:
         rng = rng if rng is not None else np.random.default_rng(self.config.seed) # Motor aleatorio con una semilla preconfigurada
         stopping = build_stopping_criterion(self.config, self.bounds_arr) # Creación del criterio de paro 
 
-        population = self._random_population(self.config.population_size, rng) # Creación de población aleatoria
+        population = self._defined_population(self.config.population_size, rng) # Creación de población aleatoria
         fitness = self._evaluate(population) # Evaluar la población aleatoria
 
         # Diccionarios de datos
