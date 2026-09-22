@@ -65,6 +65,8 @@ from ga_continuo import (
     is_success,
     make_ackley_2d,
     make_sphere,
+    make_displaced,
+    make_maximun_sphere
 )
 
 
@@ -80,9 +82,10 @@ ____________________________________________________________
 # Crear los problemas con los contenedores de los problemas con las funciones auxiliares
 def build_problems() -> dict[str, ProblemSpec]:
     return {
-        "ackley_2d": make_ackley_2d(),
-        "sphere_4d": make_sphere(4),
-        "sphere_10d": make_sphere(10),
+        "displaced_sphere_4d": make_displaced(4),
+        "displaced_sphere_10d": make_displaced(10),
+        "maximun_sphere_4d": make_maximun_sphere(4),
+        "maximun_sphere_10d": make_maximun_sphere(10),
     }
 
 # Correr una sola corrida
@@ -367,6 +370,7 @@ def run_final(args: argparse.Namespace) -> None:
         print(f" listo ({elapsed:.1f}s)")
 
         all_runs[name] = runs
+        print(f"Mejor X en {name}: {runs[-1].best_x}")
         stats_rows.append(compute_stats(problem, runs, args.success_tolerance))
     #Imprimir los resultados
     print_stats_table(stats_rows)
@@ -379,11 +383,11 @@ def run_final(args: argparse.Namespace) -> None:
             name, runs, os.path.join(args.output_dir, f"convergencia_{name}.png"), config_label
         )
 
-    plot_sphere_scalability(
-        all_runs["sphere_4d"], all_runs["sphere_10d"],
-        os.path.join(args.output_dir, "escalabilidad_esfera_4d_vs_10d.png"),
-        config_label,
-    )
+    # plot_sphere_scalability(
+    #     all_runs["sphere_4d"], all_runs["sphere_10d"],
+    #     os.path.join(args.output_dir, "escalabilidad_esfera_4d_vs_10d.png"),
+    #     config_label,
+    # )
 
     print("\nExperimento final completo. Resultados en:", os.path.abspath(args.output_dir))
 
