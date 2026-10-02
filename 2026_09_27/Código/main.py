@@ -1,34 +1,41 @@
 """
+Autor: Mariscal Rodríguez Omar Jesús
+Materia: Algoritmos Metaheurísticos
+Profesor: Paredes López Ángel Ignasio
+Actividad 4 - Algoritmo de Colonia de Abejas Artificiales
+
+Universidad de Guadalajara
+Centro Universitario de Ciencias Exactas e Ingenierías
+
+------------------------------------------------------------------------
+
 main.py
-=======
 Orquesta la Actividad 4 en dos modos:
 
-    --mode tuning:
+    --mode tuning (Estretegia heredada de la actividad anterior para la búsqueda de hiperparámetros ideales):
         Barrido de candidatos de (tamaño de colonia SN, multiplicador de
         `limit` respecto a SN x D, máximo de ciclos), con pocas corridas
         por combinación sobre Eggholder. Genera una tabla comparativa para
-        elegir manualmente la configuración final (deliverable
-        "Sintonización de Parámetros" del reporte, incluyendo el análisis
-        de qué pasa si `limit` es muy chico o muy grande).
+        elegir manualmente la configuración final
+
 
     --mode final (default):
         Corre la configuración elegida con >= 30 corridas independientes
         sobre Eggholder. Genera:
             - Tabla estadística (mejor, peor, media, desviación estándar,
               tasa de éxito).
-            - Curva de convergencia PROMEDIO (mejor fitness vs. ciclo,
+            - Curva de convergencia Promedio (mejor fitness vs. ciclo,
               promediada sobre las corridas).
-            - Una corrida adicional DEDICADA (separada de las 30
+            - Una corrida adicional Dedicada (separada de las 30
               estadísticas, con semilla propia reproducible) que captura
               snapshots de la población en 3 momentos (inicial, intermedia,
               final) y los grafica sobre un contorno de la función
-              Eggholder — deliverable "Distribución Espacial de la
-              Población".
+              Eggholder para la distribución espacial
             - Gráfica de diversidad poblacional (distancia euclidiana media
               al centroide) vs. ciclo, como información adicional que
               ilustra el efecto de las abejas exploradoras.
 
-Para modificar en vivo (evaluación presencial):
+Para la modificación:
     - Cambiar selección de vecino de aleatoria a la más cercana euclidiana:
       flag --neighbor-selection nearest_euclidean (o viceversa).
     - Cambiar estrategia de exploradoras (una por ciclo vs. todas las que
@@ -42,6 +49,7 @@ Uso:
     python main.py --mode final --runs 5   # corrida rápida de prueba
 """
 
+# Importaciones necesarias similares a las actividades pasadas
 from __future__ import annotations
 
 import argparse
@@ -57,6 +65,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+#Importaciones del archivo de configuraciones
 from abc_colony import (
     ABCConfig,
     ABCAlgorithm,
@@ -66,20 +75,22 @@ from abc_colony import (
     make_eggholder,
 )
 
-
+# Constantes para la carpeta de salida y número de veces que se corre el experimento por default
 OUTPUT_DIR_DEFAULT = "resultados"
 N_RUNS_FINAL_DEFAULT = 30
 
 
-# ======================================================================
-# Utilidades comunes
-# ======================================================================
+"""
+Utilidades comunes
+____________________________________________________________
+"""
 
+# Correr una sola vuelta del algoritmo
 def run_single(problem: ProblemSpec, config: ABCConfig, seed: int, callback=None) -> RunResult:
     algo = ABCAlgorithm(problem, config)
     return algo.run(rng=np.random.default_rng(seed), callback=callback)
 
-
+# Correr varias veces el algoritmo mientras se recogen los resultados
 def run_many(problem: ProblemSpec, config: ABCConfig, n_runs: int, base_seed: int) -> list[RunResult]:
     rng_seeder = np.random.default_rng(base_seed)
     results = []
@@ -89,7 +100,7 @@ def run_many(problem: ProblemSpec, config: ABCConfig, n_runs: int, base_seed: in
         results.append(run_single(problem, cfg, run_seed))
     return results
 
-
+# Cálculo de la curva promedio para las gráficas
 def mean_curve(runs: list[RunResult], attr: str) -> np.ndarray:
     curves = [getattr(r, attr) for r in runs]
     max_len = max(len(c) for c in curves)
@@ -97,10 +108,11 @@ def mean_curve(runs: list[RunResult], attr: str) -> np.ndarray:
     return padded.mean(axis=0)
 
 
-# ======================================================================
-# Modo TUNING
-# ======================================================================
-
+"""
+Modo TUNING
+____________________________________________________________
+"""
+# Contenedor de datos para los resultados del modo Tuning
 @dataclass
 class TuningRow:
     colony_size: int
@@ -111,29 +123,29 @@ class TuningRow:
     success_rate: float | None
     mean_cycles: float
 
-
 def parse_int_list(text: str) -> list[int]:
     return [int(v) for v in text.split(",")]
-
 
 def parse_float_list(text: str) -> list[float]:
     return [float(v) for v in text.split(",")]
 
 
+# Ejecución del modo Tuning
 def run_tuning(args: argparse.Namespace) -> list[TuningRow]:
-    problem = make_eggholder()
-    colony_sizes = parse_int_list(args.tuning_colony_sizes)
-    limit_multipliers = parse_float_list(args.tuning_limit_multipliers)
-    max_cycles_list = parse_int_list(args.tuning_max_cycles)
+    problem = make_eggholder() # Creación del Contenedor de Datos del Problema EggHolder
+    colony_sizes = parse_int_list(args.tuning_colony_sizes) # Número de colonias a int
+    limit_multipliers = parse_float_list(args.tuning_limit_multipliers) # Límites que se van a probar
+    max_cycles_list = parse_int_list(args.tuning_max_cycles) # Máximo de ciclos por cada combinación
 
-    combos = list(itertools.product(colony_sizes, limit_multipliers, max_cycles_list))
-    print(f"Modo TUNING: {len(combos)} combinaciones x {args.tuning_runs} corridas = "
+    combos = list(itertools.product(colony_sizes, limit_multipliers, max_cycles_list)) # Todas las combinaciones que el modo probará
+    print(f"Modo TUNING: {len(combos)} combinaciones x {args.tuning_runs} corridas = " # Impresiones en consola
           f"{len(combos) * args.tuning_runs} ejecuciones totales sobre Eggholder\n")
 
     rows: list[TuningRow] = []
+    #Bucle del modo tuning
     for i, (sn, limit_mult, max_cycles) in enumerate(combos, start=1):
-        limit = max(1, round(limit_mult * sn * problem.n_vars))
-        config = ABCConfig(
+        limit = max(1, round(limit_mult * sn * problem.n_vars)) # Límite default para el estancamiento
+        config = ABCConfig( # Creación de las configuraciones de la run
             colony_size=sn,
             limit=limit,
             max_cycles=max_cycles,
@@ -145,15 +157,16 @@ def run_tuning(args: argparse.Namespace) -> list[TuningRow]:
         )
 
         print(f"[{i}/{len(combos)}] SN={sn} limit={limit} (x{limit_mult} SN*D) max_cycles={max_cycles} "
-              f"-> {args.tuning_runs} corridas...", end="", flush=True)
-        t0 = time.time()
-        runs = run_many(problem, config, args.tuning_runs, base_seed=args.seed)
+              f"-> {args.tuning_runs} corridas...", end="", flush=True) 
+        t0 = time.time() # Medición del tiempo
+        runs = run_many(problem, config, args.tuning_runs, base_seed=args.seed) # Correr la combinación
         elapsed = time.time() - t0
 
+        #Recolectar estadística
         best_values = np.array([r.best_fitness for r in runs])
         successes = [is_success(problem, v, args.success_tolerance) for v in best_values]
         success_rate = float(np.mean(successes)) if all(s is not None for s in successes) else None
-
+        # Agregar la estadística al retorno (para le exportación de la tabla)
         rows.append(
             TuningRow(
                 colony_size=sn,
@@ -170,6 +183,7 @@ def run_tuning(args: argparse.Namespace) -> list[TuningRow]:
     return rows
 
 
+#Impresión en consola de los resultados del modo Tuning
 def print_tuning_table(rows: list[TuningRow]) -> None:
     header = (f"{'SN':>5} {'limit':>7} {'max_cyc':>8} {'Media mejor':>14} "
               f"{'Desv.Std':>10} {'% Éxito':>9} {'Ciclos media':>13}")
@@ -182,7 +196,7 @@ def print_tuning_table(rows: list[TuningRow]) -> None:
             f"{r.std_best:>10.4f} {success_str:>9} {r.mean_cycles:>13.1f}"
         )
 
-
+# Exportación de la tabla de exploración de hiperparámetros a un CSV
 def export_tuning_csv(rows: list[TuningRow], path: str) -> None:
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -199,10 +213,12 @@ def export_tuning_csv(rows: list[TuningRow], path: str) -> None:
           "un balance y luego corre --mode final con esos valores.")
 
 
-# ======================================================================
-# Modo FINAL
-# ======================================================================
+"""
+Modo FINAL
+____________________________________________________________
+"""
 
+# Contenedor de datos estadísticos
 @dataclass
 class StatsRow:
     problem_name: str
@@ -213,7 +229,7 @@ class StatsRow:
     success_rate: float | None
     mean_cycles: float
 
-
+# Cálculos de las estadísticas dado el éxito (si se conoce el mínimo analítico)
 def compute_stats(problem: ProblemSpec, runs: list[RunResult], tolerance: float) -> StatsRow:
     values = np.array([r.best_fitness for r in runs])
     successes = [is_success(problem, v, tolerance) for v in values]
@@ -229,6 +245,7 @@ def compute_stats(problem: ProblemSpec, runs: list[RunResult], tolerance: float)
     )
 
 
+# Impresión de la tabla de estadísticas
 def print_stats_table(row: StatsRow) -> None:
     header = f"{'Problema':<12} {'Mejor':>12} {'Peor':>12} {'Media':>12} {'Desv.Std':>12} {'% Éxito':>9} {'Ciclos media':>13}"
     print("\n" + header)
@@ -239,7 +256,7 @@ def print_stats_table(row: StatsRow) -> None:
         f"{row.std:>12.4f} {success_str:>9} {row.mean_cycles:>13.1f}"
     )
 
-
+# Exportación de las estadísticas a un CSV
 def export_stats_csv(row: StatsRow, path: str) -> None:
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -250,7 +267,7 @@ def export_stats_csv(row: StatsRow, path: str) -> None:
         ])
     print(f"\nTabla estadística exportada a: {path}")
 
-
+#Gráfica de convergenvcia
 def plot_convergence(runs: list[RunResult], output_path: str, config_label: str) -> None:
     fig, ax = plt.subplots(figsize=(10, 6))
     curve = mean_curve(runs, "convergence_best")
@@ -267,7 +284,7 @@ def plot_convergence(runs: list[RunResult], output_path: str, config_label: str)
 
 def plot_diversity(runs: list[RunResult], output_path: str, config_label: str) -> None:
     """Gráfica adicional: diversidad poblacional (distancia euclidiana
-    media al centroide, normalizada) vs. ciclo — ilustra el efecto de las
+    media al centroide, normalizada) vs. ciclo para ilustrar el efecto de las
     abejas exploradoras reinyectando diversidad."""
     fig, ax = plt.subplots(figsize=(10, 6))
     curve = mean_curve(runs, "diversity_history")
@@ -316,9 +333,9 @@ def plot_spatial_distribution(
 
 
 def capture_visualization_run(problem: ProblemSpec, config: ABCConfig, seed: int) -> list[tuple[int, np.ndarray]]:
-    """Corre el ABC una vez, capturando la población en CADA ciclo, y
+    """Corre el ABC una vez, capturando la población en cada ciclo, y
     devuelve exactamente 3 snapshots (inicial, intermedia, final) para el
-    deliverable de distribución espacial. Esta corrida es independiente de
+    la distribución espacial pedida. Esta corrida es independiente de
     las N_RUNS estadísticas, para no cargarlas de snapshots innecesarios."""
     history: list[tuple[int, np.ndarray]] = []
 
@@ -332,10 +349,10 @@ def capture_visualization_run(problem: ProblemSpec, config: ABCConfig, seed: int
     intermediate = history[len(history) // 2]
     return [initial, intermediate, final]
 
-
+# Ejecución final del algoritmo
 def run_final(args: argparse.Namespace) -> None:
-    problem = make_eggholder()
-    config = ABCConfig(
+    problem = make_eggholder() # Creación del Spec Problem
+    config = ABCConfig( # Configuraciones según lo puesto en consola
         colony_size=args.colony_size,
         onlooker_count=args.onlooker_count,
         limit=args.limit,
@@ -347,7 +364,7 @@ def run_final(args: argparse.Namespace) -> None:
         diversity_epsilon=args.diversity_epsilon,
         success_tolerance=args.success_tolerance,
     )
-    effective_limit = config.limit if config.limit is not None else config.colony_size * problem.n_vars
+    effective_limit = config.limit if config.limit is not None else config.colony_size * problem.n_vars # Cálculo de límite de estancamiento
     config_label = (
         f"SN={config.colony_size}, limit={effective_limit}, max_cycles={config.max_cycles}, "
         f"vecino={config.neighbor_selection}, exploradoras={config.scout_strategy}"
@@ -387,9 +404,10 @@ def run_final(args: argparse.Namespace) -> None:
     print("\nExperimento final completo. Resultados en:", os.path.abspath(args.output_dir))
 
 
-# ======================================================================
-# CLI / punto de entrada
-# ======================================================================
+"""
+CLI para cambiar estretegias directamente en consola sin modificar código
+____________________________________________________________
+"""
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Actividad 4 - ABC: tuning y experimento final sobre Eggholder")
@@ -425,16 +443,16 @@ def parse_args() -> argparse.Namespace:
 
     return parser.parse_args()
 
-
+# Función main
 def main() -> None:
-    args = parse_args()
+    args = parse_args() # Argumentos de consola
 
-    if args.mode == "tuning":
+    if args.mode == "tuning": # Para el modo tuning
         rows = run_tuning(args)
         print_tuning_table(rows)
         os.makedirs(args.output_dir, exist_ok=True)
         export_tuning_csv(rows, os.path.join(args.output_dir, "tabla_sintonizacion_abc.csv"))
-    else:
+    else: # Para el modo final
         run_final(args)
 
 
