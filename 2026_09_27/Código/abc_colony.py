@@ -195,7 +195,10 @@ def select_neighbor_nearest_euclidean(
     diffs = population - population[index_i]
     dists = np.linalg.norm(diffs, axis=1)
     dists[index_i] = np.inf  # excluir la propia fuente
-    return int(np.argmin(dists))
+
+    top_3 = np.argpartition(dists, 3)[:3] #Obtner los tres más cercanos
+    chosen_index = np.random.choice(top_3) # Elegir uno al azar
+    return int(chosen_index)
 
 # Listado de estrategias de la selección de vecinos
 NEIGHBOR_SELECTION_OPERATORS: dict[str, NeighborSelectionOperator] = {
@@ -342,7 +345,7 @@ Misma idea que las actividades pasadas, un contenedor de datos
 @dataclass
 class RunResult:
     """Resultado de una corrida completa del ABC."""
-
+    radio_list: list[float]
     best_x: np.ndarray
     best_fitness: float
     cycles_run: int
@@ -418,11 +421,29 @@ class ABCAlgorithm:
         trial_counts: np.ndarray,
         index_i: int,
         rng: Generator,
+        employed: bool, # Determina si la abeja es Empleada
     ) -> None:
         """Genera un candidato vecino a `index_i` y lo adopta (selección
         greedy) si mejora la fuente actual; si no, incrementa su contador
         de intentos fallidos (`trial`)."""
-        candidate = self._neighbor_search_candidate(population, index_i, rng) # Encontrar una posible nueve fuente de alimento
+        #candidate = self._neighbor_search_candidate(population, index_i, rng) # Encontrar una posible nueve fuente de alimento
+        
+        if(employed): #Si la abeja es empleada, usamos la distancia euclidiana
+            # 1. Obtenemos el indice del vecino más cercano usando tu función
+            index_j = select_neighbor_nearest_euclidean(population, index_i, rng, self.config)
+            
+            # 2. Obtenemos las coordenadas reales de ese vecino
+            vecino_coords = population[index_j]
+            
+            # 3. Generamos el candidato mutando la solución actual con el vecino
+            # (Fórmula estándar de ABC: x_i + phi * (x_i - x_j))
+            phi = rng.uniform(-1, 1, size=self.n_vars)
+            candidate = population[index_i] + phi * (population[index_i] - vecino_coords)
+            candidate = np.clip(candidate, self.low, self.high) # Clippear al espacio de búsqueda
+            
+        else: # Si no es empleada, se utiliza el configurado
+            candidate = self._neighbor_search_candidate(population, index_i, rng)
+        
         f_candidate = float(self.problem.func(candidate.reshape(1, -1))[0]) # Evaluación del fitness de la nueva fuente
 
         if f_candidate < fitness[index_i]: # Si la fuente candidata es mejor (Menor Fitness)
@@ -438,7 +459,7 @@ class ABCAlgorithm:
         """Fase de abejas Empleadas: cada fuente intenta una búsqueda
         vecinal (una abeja empleada por fuente)."""
         for i in range(self.colony_size): # Cada abeja en la colonia
-            self._greedy_update(population, fitness, trial_counts, i, rng) # Intenta buscar una mejor fuente de alimento, puede conseguirlo o aumentar su contador de estancamiento
+            self._greedy_update(population, fitness, trial_counts, i, rng, True) # Intenta buscar una mejor fuente de alimento, puede conseguirlo o aumentar su contador de estancamiento
 
     # Selección de probabilidades que usarán las abejas observadoras por método de ruleta
     def _selection_probabilities(self, fitness: np.ndarray) -> np.ndarray:
@@ -461,7 +482,7 @@ class ABCAlgorithm:
         probs = self._selection_probabilities(fitness) # Cálculo de probabilidades para la ruleta
         chosen = rng.choice(self.colony_size, size=self.onlooker_count, replace=True, p=probs) # Selección aleatoria de onlooker_count fuentes pudiéndose repetir
         for i in chosen:
-            self._greedy_update(population, fitness, trial_counts, int(i), rng) # Cada observadora intenta buscar una fuente de alimento mejor dada en referencia a una fuente de alimento vecino
+            self._greedy_update(population, fitness, trial_counts, int(i), rng, False) # Cada observadora intenta buscar una fuente de alimento mejor dada en referencia a una fuente de alimento vecino
             # Comportamiento idéntico a la empleadas
 
     def _scout_phase(
@@ -497,6 +518,7 @@ class ABCAlgorithm:
 
         cycle = 0 # Contador de iteraciones
         stopped_reason = "max_cycles" # Razón de paro (por default será número de ciclos; será modificada si otro criterio de paro es el que finalmente actua)
+        radio_list = []
 
         while True: # Ciclo Principal
             current_best_idx = int(np.argmin(fitness)) # Mejor índice actual 
@@ -524,6 +546,12 @@ class ABCAlgorithm:
             self._onlooker_phase(population, fitness, trial_counts, rng) # Fase de las abejas observadoras (Selección de las mejores fuentes y búsqueda de mejores fuentes)
             self._scout_phase(population, fitness, trial_counts, rng) # Fase de las abejas exploradoras (Abdanonar fuentes estancadas y aleatorizar nuevas)
             cycle += 1
+
+            # Calcular el radio promedio
+            centroide = np.mean(population, axis = 0)
+            radio = np.mean(np.linalg.norm(population - centroide, axis=1))
+            radio_list.append(radio)
+
         #Retorno de resultados y estadística
         return RunResult(
             best_x=best_x,
@@ -532,6 +560,7 @@ class ABCAlgorithm:
             convergence_best=convergence_best,
             diversity_history=diversity_history,
             stopped_reason=stopped_reason,
+            radio_list=radio_list
         )
 
 

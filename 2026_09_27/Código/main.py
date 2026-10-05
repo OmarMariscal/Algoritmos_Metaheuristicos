@@ -221,6 +221,7 @@ ____________________________________________________________
 # Contenedor de datos estadísticos
 @dataclass
 class StatsRow:
+    runs: list[RunResult]
     problem_name: str
     best: float
     worst: float
@@ -228,6 +229,7 @@ class StatsRow:
     std: float
     success_rate: float | None
     mean_cycles: float
+    last_radio: float
 
 # Cálculos de las estadísticas dado el éxito (si se conoce el mínimo analítico)
 def compute_stats(problem: ProblemSpec, runs: list[RunResult], tolerance: float) -> StatsRow:
@@ -235,6 +237,7 @@ def compute_stats(problem: ProblemSpec, runs: list[RunResult], tolerance: float)
     successes = [is_success(problem, v, tolerance) for v in values]
     success_rate = float(np.mean(successes)) if all(s is not None for s in successes) else None
     return StatsRow(
+        runs= runs,
         problem_name=problem.name,
         best=float(values.min()),
         worst=float(values.max()),
@@ -242,19 +245,29 @@ def compute_stats(problem: ProblemSpec, runs: list[RunResult], tolerance: float)
         std=float(values.std(ddof=1)) if len(values) > 1 else 0.0,
         success_rate=success_rate,
         mean_cycles=float(np.mean([r.cycles_run for r in runs])),
+        last_radio=float(runs[-1].radio_list[-1])
     )
 
 
 # Impresión de la tabla de estadísticas
 def print_stats_table(row: StatsRow) -> None:
-    header = f"{'Problema':<12} {'Mejor':>12} {'Peor':>12} {'Media':>12} {'Desv.Std':>12} {'% Éxito':>9} {'Ciclos media':>13}"
+    header = f"{'Problema':<12} {'Mejor':>12} {'Peor':>12} {'Media':>12} {'Desv.Std':>12} {'% Éxito':>9} {'Ciclos media':>13} {'Último Radio':>12}"
     print("\n" + header)
     print("-" * len(header))
     success_str = f"{row.success_rate:.0%}" if row.success_rate is not None else "N/A"
     print(
         f"{row.problem_name:<12} {row.best:>12.4f} {row.worst:>12.4f} {row.mean:>12.4f} "
-        f"{row.std:>12.4f} {success_str:>9} {row.mean_cycles:>13.1f}"
+        f"{row.std:>12.4f} {success_str:>9} {row.mean_cycles:>13.1f} {row.last_radio:>12.1f}"
     )
+
+    print_radii_runs_table(row)
+    # print('=====================================================================')
+    # medio_idx = len(row.runs[0].radio_list) // 2
+    # print(f'Evolución del radio en una ejecución')
+    # print(f'Radio en la Primera Iteración: {row.runs[0].radio_list[0]}')
+    # print(f'Radio en la Iteración {medio_idx+1}: {row.runs[0].radio_list[medio_idx]}')
+    # print(f'Radio en la Última Iteración: {row.runs[0].radio_list[-1]}')
+    
 
 # Exportación de las estadísticas a un CSV
 def export_stats_csv(row: StatsRow, path: str) -> None:
@@ -297,6 +310,35 @@ def plot_diversity(runs: list[RunResult], output_path: str, config_label: str) -
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
     print(f"Gráfica de diversidad poblacional guardada: {output_path}")
+
+def print_radii_runs_table(row: StatsRow):
+    """Imprime una tabla detallada donde cada fila es una corrida (run)
+    del problema actual, mostrando su radio Inicial, Medio y Final."""
+    
+    print("\n" + "="*65)
+    print(f"EVOLUCIÓN DEL RADIO POR CORRIDA - PROBLEMA: {row.problem_name.upper()}")
+    print("="*65)
+    print(f"{'No. Corrida':<12} | {'Radio Inicial':<15} | {'Radio Medio':<15} | {'Radio Final':<15}")
+    print("-"*65)
+    
+    # Recorremos cada corrida (run) de forma individual
+    for idx, run in enumerate(row.runs, start=1):
+        r_list = run.radio_list
+        
+        # Validar si esta corrida en particular tiene datos
+        if not r_list:
+            print(f"Run {idx:<8} | {'N/A':<15} | {'N/A':<15} | {'N/A':<15}")
+            continue
+            
+        # Extraer los puntos clave de la lista de esta corrida
+        init_val = r_list[0]
+        mid_val = r_list[len(r_list) // 2]
+        final_val = r_list[-1]
+        
+        # Imprimir los datos exactos de la corrida con formato científico de 6 decimales
+        print(f"Run {idx:<8} | {init_val:<15.6f} | {mid_val:<15.6f} | {final_val:<15.6f}")
+        
+    print("="*65 + "\n")
 
 
 def plot_spatial_distribution(
