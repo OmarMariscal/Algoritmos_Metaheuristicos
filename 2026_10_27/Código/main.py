@@ -2,7 +2,7 @@
 Autor: Mariscal Rodríguez Omar Jesús
 Materia: Algoritmos Metaheurísticos
 Profesor: Paredes López Ángel Ignasio
-Actividad 4 - Algoritmo de Colonia de Abejas Artificiales
+Actividad 5 - Optimización por Enjambre de Partículas (PSO)
 
 Universidad de Guadalajara
 Centro Universitario de Ciencias Exactas e Ingenierías
@@ -46,6 +46,7 @@ Uso:
     python main.py --mode final --runs 5   # corrida rápida de prueba
 """
 
+# Importaciones necesarias
 from __future__ import annotations
 
 import argparse
@@ -71,23 +72,25 @@ from pso import (
     make_rosenbrock,
 )
 
-
+# Ajustes por defecto
 OUTPUT_DIR_DEFAULT = "resultados"
 N_RUNS_FINAL_DEFAULT = 30
 
 
-# ======================================================================
-# Utilidades comunes
-# ======================================================================
+"""
+Utilidades comunes
+____________________________________________________________
+"""
 
+# Contruir los problemas pedidos
 def build_problems() -> dict[str, ProblemSpec]:
     return {"rosenbrock": make_rosenbrock(2), "michalewicz": make_michalewicz(2, m=10)}
 
-
+# Correr una vez el elgoritmo
 def run_single(problem: ProblemSpec, config: PSOConfig, seed: int, callback=None) -> RunResult:
     return PSO(problem, config).run(rng=np.random.default_rng(seed), callback=callback)
 
-
+# Correr varias veces el algoritmo
 def run_many(problem: ProblemSpec, config: PSOConfig, n_runs: int, base_seed: int) -> list[RunResult]:
     seeder = np.random.default_rng(base_seed)
     results = []
@@ -96,7 +99,7 @@ def run_many(problem: ProblemSpec, config: PSOConfig, n_runs: int, base_seed: in
         results.append(run_single(problem, dataclasses.replace(config, seed=run_seed), run_seed))
     return results
 
-
+# Promedio de la curba
 def mean_curve(runs: list[RunResult], attr: str) -> np.ndarray:
     """Promedia una curva por iteración entre corridas; las corridas más
     cortas (paro débil) se extienden con su último valor."""
@@ -104,15 +107,15 @@ def mean_curve(runs: list[RunResult], attr: str) -> np.ndarray:
     max_len = max(len(c) for c in curves)
     return np.array([c + [c[-1]] * (max_len - len(c)) for c in curves]).mean(axis=0)
 
-
+# De consola a real
 def parse_float_list(text: str) -> list[float]:
     return [float(v) for v in text.split(",")]
 
-
+#De consola a entero
 def parse_int_list(text: str) -> list[int]:
     return [int(v) for v in text.split(",")]
 
-
+# Construcción desde consola del PSO Config
 def config_from_args(args: argparse.Namespace, **overrides) -> PSOConfig:
     """Construye un PSOConfig desde los flags de CLI, con overrides opcionales."""
     base = dict(
@@ -136,17 +139,18 @@ def config_from_args(args: argparse.Namespace, **overrides) -> PSOConfig:
     base.update(overrides)
     return PSOConfig(**base)
 
-
+# Función para impresiones de hiperparámetros
 def config_label(cfg: PSOConfig) -> str:
     w_txt = f"w={cfg.w}" if cfg.inertia_schedule == "constant" else f"w:{cfg.w_start}->{cfg.w_end}"
     return (f"N={cfg.swarm_size}, {w_txt}, c1={cfg.c1}, c2={cfg.c2}, topología={cfg.topology}"
             f"(k={cfg.neighborhood_k}), fronteras={cfg.boundary_handling}")
 
 
-# ======================================================================
-# Modo TUNING
-# ======================================================================
-
+"""
+Modo TUNING
+____________________________________________________________
+"""
+#Contenedor de datos del modo tuning
 @dataclass
 class TuningRow:
     swarm_size: int
@@ -158,42 +162,43 @@ class TuningRow:
     std_best: float
     success_rate: float | None
 
-
+# Corrida del modo tuning
 def run_tuning(args: argparse.Namespace) -> list[TuningRow]:
-    problems = build_problems()
-    sizes = parse_int_list(args.tuning_swarm_sizes)
-    ws = parse_float_list(args.tuning_w)
-    c1s = parse_float_list(args.tuning_c1)
-    c2s = parse_float_list(args.tuning_c2)
+    problems = build_problems() # Construcción de los problemas
+    sizes = parse_int_list(args.tuning_swarm_sizes) # Pasamos a enterlos los tamaños
+    ws = parse_float_list(args.tuning_w) # Peso de inercia
+    c1s = parse_float_list(args.tuning_c1) # Peso del factor cognitivo
+    c2s = parse_float_list(args.tuning_c2) # Peso del factor social
 
+    # Si el usuario elige linear_decay, el valor de w que se barre no se usa (se ignoran los valores del barrido y se usan w_start/w_end en su lugar).
     if args.inertia_schedule != "constant":
         print("AVISO: el tuning de 'w' asume inercia constante; con linear_decay el valor de w del "
               "barrido no se usa (se usan --w-start/--w-end).\n")
 
-    combos = list(itertools.product(sizes, ws, c1s, c2s))
-    total_runs = len(combos) * len(problems) * args.tuning_runs
+    combos = list(itertools.product(sizes, ws, c1s, c2s)) # Lista de combinaciones
+    total_runs = len(combos) * len(problems) * args.tuning_runs # Cálculo del total de runs necerias
     print(f"Modo TUNING: {len(combos)} combinaciones x {len(problems)} funciones x "
           f"{args.tuning_runs} corridas = {total_runs} ejecuciones\n")
 
     rows: list[TuningRow] = []
-    t_start = time.time()
-    for i, (n, w, c1, c2) in enumerate(combos, start=1):
-        cfg = config_from_args(args, swarm_size=n, w=w, c1=c1, c2=c2)
-        for pname, problem in problems.items():
-            runs = run_many(problem, cfg, args.tuning_runs, base_seed=args.seed)
-            vals = np.array([r.best_fitness for r in runs])
-            succ = [is_success(problem, v, args.success_tolerance) for v in vals]
-            rows.append(TuningRow(
+    t_start = time.time() # Tiempo para logs
+    for i, (n, w, c1, c2) in enumerate(combos, start=1): # Bucle principal
+        cfg = config_from_args(args, swarm_size=n, w=w, c1=c1, c2=c2) # Configuraciones esenciales
+        for pname, problem in problems.items(): # Por combinación
+            runs = run_many(problem, cfg, args.tuning_runs, base_seed=args.seed) # Correr el algoritmo
+            vals = np.array([r.best_fitness for r in runs]) # Obtner los mejores fitness
+            succ = [is_success(problem, v, args.success_tolerance) for v in vals] # Calcular el porcentaje de éxito basado en el mínimo conocido
+            rows.append(TuningRow( # Estadística final
                 swarm_size=n, w=w, c1=c1, c2=c2, problem=pname,
                 mean_best=float(vals.mean()),
                 std_best=float(vals.std(ddof=1)) if len(vals) > 1 else 0.0,
                 success_rate=float(np.mean(succ)) if all(s is not None for s in succ) else None,
             ))
         if i % 10 == 0 or i == len(combos):
-            print(f"  [{i}/{len(combos)}] combinaciones evaluadas ({time.time() - t_start:.0f}s)")
+            print(f"  [{i}/{len(combos)}] combinaciones evaluadas ({time.time() - t_start:.0f}s)") # Impresiones finales
     return rows
 
-
+#Contenedor de datos del modo tuning
 @dataclass
 class CombinedRow:
     swarm_size: int
@@ -219,8 +224,8 @@ def combine_tuning_rows(rows: list[TuningRow]) -> list[CombinedRow]:
         ordered = sorted(groups, key=lambda k: groups[k][p].mean_best)
         ranks[p] = {k: pos + 1 for pos, k in enumerate(ordered)}
 
-    combined = []
-    for key, per_problem in groups.items():
+    combined = [] # Combinaciones
+    for key, per_problem in groups.items(): # Por combinación
         success = {p: (per_problem[p].success_rate or 0.0) for p in problems}
         combined.append(CombinedRow(
             swarm_size=key[0], w=key[1], c1=key[2], c2=key[3],
@@ -232,7 +237,7 @@ def combine_tuning_rows(rows: list[TuningRow]) -> list[CombinedRow]:
     combined.sort(key=lambda c: (-c.combined_success, c.rank_sum))
     return combined
 
-
+#Función auxiliar de impresión del modo tuning
 def print_tuning_ranking(combined: list[CombinedRow], top: int = 15) -> None:
     problems = list(combined[0].mean_best)
     header = f"{'Pos':>3} {'N':>4} {'w':>5} {'c1':>5} {'c2':>5} {'Éxito comb.':>12} "
@@ -245,7 +250,7 @@ def print_tuning_ranking(combined: list[CombinedRow], top: int = 15) -> None:
         line += " ".join(f"{c.success[p]:>13.0%} {c.mean_best[p]:>13.6f}" for p in problems)
         print(line)
 
-
+#Función auxiliar para la exportación de resultados del modo tuning para el reporte
 def export_tuning_csv(combined: list[CombinedRow], path: str) -> None:
     problems = list(combined[0].mean_best)
     with open(path, "w", newline="", encoding="utf-8") as f:
@@ -262,11 +267,12 @@ def export_tuning_csv(combined: list[CombinedRow], path: str) -> None:
     print(f"\nTabla completa de sintonización exportada a: {path}")
     print("Elige una configuración con buen éxito combinado y corre --mode final con esos valores.")
 
+"""
+Modo FINAL
+____________________________________________________________
+"""
 
-# ======================================================================
-# Modo FINAL
-# ======================================================================
-
+# Contenedor de datos para el modo final 
 @dataclass
 class StatsRow:
     problem: str
@@ -277,7 +283,7 @@ class StatsRow:
     success_rate: float | None
     mean_iterations: float
 
-
+# Computar estadísticas del modo fincla
 def compute_stats(problem: ProblemSpec, runs: list[RunResult], tolerance: float) -> StatsRow:
     vals = np.array([r.best_fitness for r in runs])
     succ = [is_success(problem, v, tolerance) for v in vals]
@@ -291,7 +297,7 @@ def compute_stats(problem: ProblemSpec, runs: list[RunResult], tolerance: float)
         mean_iterations=float(np.mean([r.iterations_run for r in runs])),
     )
 
-
+# Impresión del modo final
 def print_stats_table(rows: list[StatsRow]) -> None:
     header = (f"{'Problema':<16} {'Mejor':>14} {'Peor':>14} {'Media':>14} {'Desv.Std':>14} "
               f"{'% Éxito':>8} {'Iter. media':>12}")
@@ -302,7 +308,7 @@ def print_stats_table(rows: list[StatsRow]) -> None:
         print(f"{r.problem:<16} {r.best:>14.8f} {r.worst:>14.8f} {r.mean:>14.8f} {r.std:>14.8f} "
               f"{s:>8} {r.mean_iterations:>12.1f}")
 
-
+#Exportar a csv la ejecución final
 def export_stats_csv(rows: list[StatsRow], path: str) -> None:
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -314,7 +320,7 @@ def export_stats_csv(rows: list[StatsRow], path: str) -> None:
             ])
     print(f"\nTabla estadística exportada a: {path}")
 
-
+# Gráfica de la convergencia
 def plot_convergence(problem: ProblemSpec, runs: list[RunResult], path: str, label: str) -> None:
     """Mejor global promedio y fitness medio del enjambre promedio vs. iteración."""
     best_curve = mean_curve(runs, "convergence_best")
@@ -337,7 +343,7 @@ def plot_convergence(problem: ProblemSpec, runs: list[RunResult], path: str, lab
     plt.close(fig)
     print(f"Gráfica de convergencia guardada: {path}")
 
-
+# Graficar diversidad
 def plot_diversity(problem: ProblemSpec, runs: list[RunResult], path: str, label: str) -> None:
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.plot(mean_curve(runs, "diversity_history"), linewidth=1.8, color="tab:green")
@@ -350,16 +356,16 @@ def plot_diversity(problem: ProblemSpec, runs: list[RunResult], path: str, label
     plt.close(fig)
     print(f"Gráfica de diversidad guardada: {path}")
 
-
+# Captura de resumen en momentos específicos de la corrida
 def capture_snapshots(problem: ProblemSpec, config: PSOConfig, seed: int) -> list[tuple[int, np.ndarray]]:
-    """Corrida DEDICADA (independiente de las N estadísticas) que captura las
+    """Corrida dedicada (independiente de las N estadísticas) que captura las
     posiciones del enjambre en cada iteración y devuelve 3 snapshots:
     inicial, intermedia (mitad de las iteraciones realmente ejecutadas) y final."""
     history: list[tuple[int, np.ndarray]] = []
     run_single(problem, config, seed, callback=lambda it, pos, fit: history.append((it, pos.copy())))
     return [history[0], history[len(history) // 2], history[-1]]
 
-
+# Graficar la distribución espacial
 def plot_spatial_distribution(
     problem: ProblemSpec, snapshots: list[tuple[int, np.ndarray]], path: str, label: str
 ) -> None:
@@ -398,47 +404,50 @@ def plot_spatial_distribution(
     plt.close(fig)
     print(f"Gráfica de distribución espacial guardada: {path}")
 
-
+# Correr el modo final
 def run_final(args: argparse.Namespace) -> None:
-    config = config_from_args(args)
-    label = config_label(config)
-    problems = build_problems()
+    config = config_from_args(args) # Cargar configuraciones
+    label = config_label(config) # Callable del headder de hiper-parámetros
+    problems = build_problems() # Construcción de problemas
 
+    # Impresión Inicial
     print("=" * 78)
     print("Actividad 5 - Optimización por Enjambre de Partículas (modo FINAL)")
     print(f"Corridas por función: {args.runs}")
     print(label)
     print("=" * 78)
 
-    os.makedirs(args.output_dir, exist_ok=True)
-    stats_rows: list[StatsRow] = []
+    os.makedirs(args.output_dir, exist_ok=True) # Carpeta de exportación
+    stats_rows: list[StatsRow] = [] # Estadísticas
 
-    for key, problem in problems.items():
-        print(f"\nEjecutando {problem.name} ({args.runs} corridas)...", end="", flush=True)
-        t0 = time.time()
-        runs = run_many(problem, config, args.runs, base_seed=args.seed)
-        print(f" listo ({time.time() - t0:.1f}s)")
-        stats_rows.append(compute_stats(problem, runs, args.success_tolerance))
+    for key, problem in problems.items(): # Blucle principal
+        print(f"\nEjecutando {problem.name} ({args.runs} corridas)...", end="", flush=True) # Inicio del modo final
+        t0 = time.time() # Medición del tiempo
+        runs = run_many(problem, config, args.runs, base_seed=args.seed) # Correr varias veces el algoritmo
+        print(f" listo ({time.time() - t0:.1f}s)") # Final del tiempo
+        stats_rows.append(compute_stats(problem, runs, args.success_tolerance)) # Cálculo de estadísticas
 
-        plot_convergence(problem, runs, os.path.join(args.output_dir, f"convergencia_{key}.png"), label)
-        plot_diversity(problem, runs, os.path.join(args.output_dir, f"diversidad_{key}.png"), label)
+        plot_convergence(problem, runs, os.path.join(args.output_dir, f"convergencia_{key}.png"), label) # Graficar Convergencia
+        plot_diversity(problem, runs, os.path.join(args.output_dir, f"diversidad_{key}.png"), label) # Graficar Diversidad
 
-        viz_seed = args.seed + 999_999
+        viz_seed = args.seed + 999_999 # Semilla aleatoria lejos para snapshot
         print(f"Corrida dedicada para distribución espacial de {problem.name} (semilla={viz_seed})")
-        snapshots = capture_snapshots(problem, config, viz_seed)
-        plot_spatial_distribution(
+        snapshots = capture_snapshots(problem, config, viz_seed) # Captura de snapshots
+        plot_spatial_distribution( # Graficar distribución espacial de la snapshot
             problem, snapshots, os.path.join(args.output_dir, f"distribucion_espacial_{key}.png"), label
         )
 
-    print_stats_table(stats_rows)
-    export_stats_csv(stats_rows, os.path.join(args.output_dir, "tabla_estadistica_pso.csv"))
+    print_stats_table(stats_rows) # Impresión de estadísticas
+    export_stats_csv(stats_rows, os.path.join(args.output_dir, "tabla_estadistica_pso.csv")) # Exportar estadísticas
     print("\nExperimento final completo. Resultados en:", os.path.abspath(args.output_dir))
 
 
-# ======================================================================
-# CLI / punto de entrada
-# ======================================================================
+"""
+CLI / punto de entrada
+____________________________________________________________
+"""
 
+# Pasar desde consola
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Actividad 5 - PSO: tuning y experimento final")
     p.add_argument("--mode", type=str, default="final", choices=["tuning", "final"])
@@ -474,7 +483,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--tuning-c2", type=str, default="1.0,1.5,2.0")
     return p.parse_args()
 
-
+# Función main
 def main() -> None:
     args = parse_args()
     if args.mode == "tuning":

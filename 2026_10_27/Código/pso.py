@@ -2,7 +2,7 @@
 Autor: Mariscal Rodríguez Omar Jesús
 Materia: Algoritmos Metaheurísticos
 Profesor: Paredes López Ángel Ignasio
-Actividad 4 - Algoritmo de Colonia de Abejas Artificiales
+Actividad 5 - Optimización por Enjambre de Partículas (PSO)
 
 Universidad de Guadalajara
 Centro Universitario de Ciencias Exactas e Ingenierías
@@ -10,21 +10,20 @@ Centro Universitario de Ciencias Exactas e Ingenierías
 ------------------------------------------------------------------------
 
 
-
 pso.py
-======
+
 Motor de Optimización por Enjambre de Partículas (Particle Swarm Optimization,
 PSO) para minimización de funciones con dominio restringido tipo caja.
 
 Ecuaciones de actualización (por partícula i, dimensión d):
     v_id <- w * v_id + c1 * r1 * (pbest_id - x_id) + c2 * r2 * (lbest_id - x_id)
     x_id <- x_id + v_id
-donde r1, r2 ~ U(0, 1) se muestrean por partícula y por dimensión, `pbest` es la
-mejor posición histórica de la partícula y `lbest` es la mejor posición
+donde r1, r2 ~ U(0, 1) se muestrean por partícula y por dimensión, "pbest" es la
+mejor posición histórica de la partícula y "lbest" es la mejor posición
 histórica (pbest) dentro de su VECINDAD (si la vecindad es todo el enjambre,
 lbest = gbest).
 
-Arquitectura (mismo espíritu que ga_binario.py, ga_continuo.py y abc_colony.py):
+Arquitectura (misma idea que se ha entregado en las actividades anteriore: ga_binario.py, ga_continuo.py y abc_colony.py):
     - PSOConfig: dataclass que centraliza la parametrización.
     - ProblemSpec: función objetivo vectorizada + dominio + óptimo conocido.
     - Estrategias intercambiables vía Protocol + registry (se eligen por
@@ -50,9 +49,9 @@ Arquitectura (mismo espíritu que ga_binario.py, ga_continuo.py y abc_colony.py)
     - Se registra por iteración: mejor global, fitness medio del enjambre y
       diversidad euclidiana (distancia media al centroide, normalizada).
 
-Autor: Actividad 5 - Algoritmos Metaheurísticos (CUCEI, UdeG)
 """
 
+# Importaciones Necesarias para el código explicadas en anteriores actividadesv
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -62,9 +61,10 @@ import numpy as np
 from numpy.random import Generator
 
 
-# ======================================================================
-# 1. Especificación del problema (función objetivo + dominio)
-# ======================================================================
+"""
+1. Especificación del problema (función objetivo + dominio)
+____________________________________________________________
+"""
 
 @dataclass(frozen=True)
 class ProblemSpec:
@@ -127,9 +127,11 @@ def make_michalewicz(n_dims: int = 2, m: int = 10) -> ProblemSpec:
     )
 
 
-# ======================================================================
-# 2. Configuración del algoritmo
-# ======================================================================
+"""
+2. Configuración del algoritmo
+____________________________________________________________
+"""
+
 
 @dataclass
 class PSOConfig:
@@ -180,15 +182,16 @@ class PSOConfig:
     seed: int | None = None
 
 
-# ======================================================================
-# 3. Estrategia: topología de vecindad (Protocol + registry)
-# ======================================================================
-
+"""
+3. Estrategias: topología de vecindad (Protocol + registry)
+____________________________________________________________
+"""
+# Contrato de la estreategia de vecindad
 class NeighborhoodTopology(Protocol):
     def __call__(
         self, positions: np.ndarray, pbest_pos: np.ndarray, pbest_fit: np.ndarray, config: PSOConfig
     ) -> np.ndarray:
-        """Devuelve, para cada partícula, el ÍNDICE de la partícula cuyo
+        """Devuelve, para cada partícula, el índice de la partícula cuyo
         pbest es el mejor de su vecindad (lbest). Forma: (n_particles,)."""
         ...
 
@@ -232,7 +235,7 @@ def topology_euclidean_knn(
     best_local = np.argmin(neighbor_fit, axis=1)
     return nearest[np.arange(n), best_local]
 
-
+# Listado de estrategias de la Topología
 TOPOLOGIES: dict[str, NeighborhoodTopology] = {
     "ring": topology_ring,
     "global": topology_global,
@@ -240,10 +243,12 @@ TOPOLOGIES: dict[str, NeighborhoodTopology] = {
 }
 
 
-# ======================================================================
-# 4. Estrategia: esquema de inercia (Protocol + registry)
-# ======================================================================
+"""
+4. Estrategia: esquema de inercia (Protocol + registry)
+____________________________________________________________
+"""
 
+# Estrategia: Patrón de la Inercia
 class InertiaSchedule(Protocol):
     def __call__(self, iteration: int, config: PSOConfig) -> float:
         """Devuelve el peso de inercia w a usar en la iteración dada."""
@@ -262,17 +267,18 @@ def inertia_linear_decay(iteration: int, config: PSOConfig) -> float:
     frac = min(1.0, iteration / max(1, config.max_iterations))
     return config.w_start + (config.w_end - config.w_start) * frac
 
-
+# Listado de Estrategias de la Inercia
 INERTIA_SCHEDULES: dict[str, InertiaSchedule] = {
     "constant": inertia_constant,
     "linear_decay": inertia_linear_decay,
 }
 
+"""
+5. Estrategia: manejo de fronteras (Protocol + registry)
+____________________________________________________________
+"""
 
-# ======================================================================
-# 5. Estrategia: manejo de fronteras (Protocol + registry)
-# ======================================================================
-
+# Estrategia: Manejo de Desborde
 class BoundaryHandler(Protocol):
     def __call__(
         self, positions: np.ndarray, velocities: np.ndarray, low: np.ndarray, high: np.ndarray, rng: Generator
@@ -312,7 +318,7 @@ def boundary_random_reset(positions, velocities, low, high, rng):
         velocities = np.where(out, 0.0, velocities)
     return positions, velocities
 
-
+# Listado de Estrategias
 BOUNDARY_HANDLERS: dict[str, BoundaryHandler] = {
     "clip": boundary_clip,
     "reflect": boundary_reflect,
@@ -320,9 +326,10 @@ BOUNDARY_HANDLERS: dict[str, BoundaryHandler] = {
 }
 
 
-# ======================================================================
-# 6. Métrica de diversidad (distancia euclidiana)
-# ======================================================================
+"""
+6. Métrica de diversidad (distancia euclidiana)
+____________________________________________________________
+"""
 
 def swarm_diversity_euclidean(positions: np.ndarray, bounds_arr: np.ndarray) -> float:
     """Distancia euclidiana MEDIA de las partículas al centroide del
@@ -333,11 +340,11 @@ def swarm_diversity_euclidean(positions: np.ndarray, bounds_arr: np.ndarray) -> 
     diagonal = float(np.linalg.norm(bounds_arr[:, 1] - bounds_arr[:, 0]))
     return mean_dist / diagonal if diagonal > 0 else 0.0
 
-
-# ======================================================================
-# 7. Criterios de paro (combinables)
-# ======================================================================
-
+"""
+7. Criterios de paro (combinables)
+____________________________________________________________
+"""
+# Estregia: Criterios de Paro
 class StoppingCriterion(Protocol):
     def should_stop(self, iteration: int, best_history: list[float], positions: np.ndarray) -> bool:
         ...
@@ -401,9 +408,11 @@ def build_stopping_criterion(config: PSOConfig, bounds_arr: np.ndarray) -> Combi
     )
 
 
-# ======================================================================
-# 8. Resultado de una corrida
-# ======================================================================
+"""
+8. Resultado de una corrida
+____________________________________________________________
+"""
+
 
 @dataclass
 class RunResult:
@@ -421,9 +430,11 @@ class RunResult:
 IterationCallback = Callable[[int, np.ndarray, np.ndarray], None]
 
 
-# ======================================================================
-# 9. Motor PSO (agnóstico de las estrategias concretas)
-# ======================================================================
+"""
+9. Motor PSO (agnóstico de las estrategias concretas)
+____________________________________________________________
+"""
+
 
 class PSO:
     """Motor del PSO (actualización síncrona). Obtiene topología, esquema de
@@ -454,68 +465,72 @@ class PSO:
 
     def run(self, rng: Generator | None = None, callback: IterationCallback | None = None) -> RunResult:
         """Ejecuta el PSO completo."""
-        cfg = self.config
-        rng = rng if rng is not None else np.random.default_rng(cfg.seed)
-        stopping = build_stopping_criterion(cfg, self.bounds_arr)
+        cfg = self.config # Configuraciones
+        rng = rng if rng is not None else np.random.default_rng(cfg.seed) # Inicialización con o sin semilla
+        stopping = build_stopping_criterion(cfg, self.bounds_arr) # Criterio de paro
 
-        n, d = cfg.swarm_size, self.problem.n_vars
-        positions = self.low + rng.random((n, d)) * (self.high - self.low)
-        velocities = rng.uniform(-self.v_max, self.v_max, size=(n, d))
-        fitness = self._evaluate(positions)
+        n, d = cfg.swarm_size, self.problem.n_vars # Crear n partículas en d dimensiones
+        positions = self.low + rng.random((n, d)) * (self.high - self.low) # Inicializar las partículas en puntos aleatorios del plano de búsqueda
+        velocities = rng.uniform(-self.v_max, self.v_max, size=(n, d)) # Velocidades aleatorias en el rango [-v_max, v_max]
+        fitness = self._evaluate(positions) # Evaluamos el fitness de cada posición de las partículas
 
-        pbest_pos = positions.copy()
-        pbest_fit = fitness.copy()
+        pbest_pos = positions.copy() # Guardamos las posicioens
+        pbest_fit = fitness.copy() # Guardamos los fitness de cada posición
 
+        # Diccionarios para estadística
         convergence_best: list[float] = []
         convergence_mean: list[float] = []
         diversity_history: list[float] = []
 
+        # Contador de Iteraciones
         iteration = 0
-        stopped_reason = "max_iterations"
+        stopped_reason = "max_iterations" # Razón de paro por defecto en iteraciones 
 
+        # Bucle principal
         while True:
-            g_idx = int(np.argmin(pbest_fit))
-            convergence_best.append(float(pbest_fit[g_idx]))
-            convergence_mean.append(float(fitness.mean()))
-            diversity_history.append(swarm_diversity_euclidean(positions, self.bounds_arr))
+            g_idx = int(np.argmin(pbest_fit)) # Obtenemos el mejor (Fitness más bajo en minimización)
+            convergence_best.append(float(pbest_fit[g_idx])) # Mejor fitness
+            convergence_mean.append(float(fitness.mean())) # Guardamos la media de la conversión
+            diversity_history.append(swarm_diversity_euclidean(positions, self.bounds_arr)) # Guardamos en el historial la diversidad
 
+            # Función auxiliar para captura de snapshots y logs
             if callback is not None:
                 callback(iteration, positions, fitness)
 
-            if stopping.should_stop(iteration, convergence_best, positions):
-                if iteration >= cfg.max_iterations:
+            if stopping.should_stop(iteration, convergence_best, positions): # Evaluación de alguno de los criterios de paro
+                if iteration >= cfg.max_iterations: # Por máximo de iteraciones
                     stopped_reason = "max_iterations"
-                elif cfg.diversity_epsilon > 0 and diversity_history[-1] < cfg.diversity_epsilon:
+                elif cfg.diversity_epsilon > 0 and diversity_history[-1] < cfg.diversity_epsilon: # Por pérdida de diversidad
                     stopped_reason = "diversity_collapse"
                 else:
-                    stopped_reason = "stagnation"
+                    stopped_reason = "stagnation" # Por estancamienot
                 break
 
             # --- Actualización síncrona de velocidad y posición ---
-            w = self.inertia_fn(iteration, cfg)
-            lbest_idx = self.topology_fn(positions, pbest_pos, pbest_fit, cfg)
-            lbest_pos = pbest_pos[lbest_idx]
+            w = self.inertia_fn(iteration, cfg) # Cálculo de la inercia
+            lbest_idx = self.topology_fn(positions, pbest_pos, pbest_fit, cfg) # Mejor índice de vecindad
+            lbest_pos = pbest_pos[lbest_idx] # Guardamos el mejor de la vecindad
 
-            r1 = rng.random((n, d))
+            r1 = rng.random((n, d)) # 
             r2 = rng.random((n, d))
             velocities = (
-                w * velocities
-                + cfg.c1 * r1 * (pbest_pos - positions)
-                + cfg.c2 * r2 * (lbest_pos - positions)
-            )
-            velocities = np.clip(velocities, -self.v_max, self.v_max)
-            positions = positions + velocities
-            positions, velocities = self.boundary_fn(positions, velocities, self.low, self.high, rng)
+                w * velocities # Inercia
+                + cfg.c1 * r1 * (pbest_pos - positions) # Componente cognitivo
+                + cfg.c2 * r2 * (lbest_pos - positions) # Componente social 
+            ) # Actualización de las velocidades
+            velocities = np.clip(velocities, -self.v_max, self.v_max) # Clipp de las velocidades a las máximas
+            positions = positions + velocities # Actualización de posiciones
+            positions, velocities = self.boundary_fn(positions, velocities, self.low, self.high, rng) # Manejo de límites
 
-            fitness = self._evaluate(positions)
-            improved = fitness < pbest_fit
-            pbest_pos[improved] = positions[improved]
-            pbest_fit[improved] = fitness[improved]
+            fitness = self._evaluate(positions) # Evaluamos la nueva posición
+            improved = fitness < pbest_fit # Verificamos si hubo mejoría
+            pbest_pos[improved] = positions[improved] # Actualizamos los posiciones de las mejores marcas personales
+            pbest_fit[improved] = fitness[improved] # Actualizamos los fitness de los mejores personales
 
-            iteration += 1
+            iteration += 1 # Aumentamos el contador de generaciones
 
-        g_idx = int(np.argmin(pbest_fit))
-        return RunResult(
+        g_idx = int(np.argmin(pbest_fit)) # obtenemos el mejor de la corrida
+        return RunResult( # Retornamos los resultados
             best_x=pbest_pos[g_idx].copy(),
             best_fitness=float(pbest_fit[g_idx]),
             iterations_run=iteration,
@@ -526,9 +541,11 @@ class PSO:
         )
 
 
-# ======================================================================
-# 10. Utilidad de éxito
-# ======================================================================
+"""
+10. Utilidad de éxito
+____________________________________________________________
+"""
+
 
 def is_success(problem: ProblemSpec, best_fitness: float, tolerance: float) -> bool | None:
     """Éxito si |f_encontrado - f_óptimo| < tolerancia. None si no hay óptimo conocido."""
