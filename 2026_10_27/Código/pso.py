@@ -29,11 +29,18 @@ Arquitectura (misma idea que se ha entregado en las actividades anteriore: ga_bi
     - Estrategias intercambiables vía Protocol + registry (se eligen por
       nombre en PSOConfig, sin tocar el motor):
         - NeighborhoodTopology (quién es la vecindad de cada partícula):
-            "ring"          -> anillo: k vecinos por cada lado (lbest clásico).
-            "global"        -> vecindad = todo el enjambre (gbest).
-            "euclidean_knn" -> los k vecinos más cercanos en distancia
-                               euclidiana en el espacio de búsqueda
-                               (vecindad espacial dinámica).
+            "tri_neighborhood" -> divide la población en 3 vecindarios
+                                  estáticos (Malla, Anillo y Estrella)
+                                  que coexisten en la misma ejecución.
+            "mesh" / "grid"    -> malla 2D con conectividad Von Neumann
+                                  (arriba, abajo, izquierda, derecha, toroide).
+            "star" / "wheel"   -> estrella: nodo central (hub) conectado a
+                                  todas y nodos periféricos conectados al hub.
+            "ring"             -> anillo: k vecinos por cada lado (lbest clásico).
+            "global"           -> vecindad = todo el enjambre (gbest).
+            "euclidean_knn"    -> los k vecinos más cercanos en distancia
+                                  euclidiana en el espacio de búsqueda
+                                  (vecindad espacial dinámica).
         - InertiaSchedule (cómo evoluciona w durante la corrida):
             "constant"     -> w fijo.
             "linear_decay" -> decae linealmente de w_start a w_end.
@@ -144,10 +151,11 @@ class PSOConfig:
         c1: Coeficiente cognitivo (atracción hacia pbest).
         c2: Coeficiente social (atracción hacia lbest).
         topology: Estrategia de vecindad registrada en TOPOLOGIES.
-        neighborhood_k: Tamaño de vecindad. "ring": vecinos por CADA lado
-            (k=1 -> vecindad de 3 con la propia). "euclidean_knn": número de
-            vecinos más cercanos (además de la propia partícula).
-            Ignorado por "global".
+            Opciones: "tri_neighborhood" (default), "mesh", "ring",
+            "star", "global", "euclidean_knn".
+        neighborhood_k: Tamaño de vecindad en anillo / knn.
+        star_mode: Modo de la topología estrella: "hub" (nodo central / wheel)
+            o "clique" (totalmente interconectada en su subenjambre).
         inertia_schedule: Esquema registrado en INERTIA_SCHEDULES.
         w_start, w_end: Extremos de "linear_decay".
         boundary_handling: Estrategia registrada en BOUNDARY_HANDLERS.
@@ -163,13 +171,14 @@ class PSOConfig:
         seed: Semilla para reproducibilidad.
     """
 
-    swarm_size: int = 40
+    swarm_size: int = 48
     max_iterations: int = 300
     w: float = 0.7
     c1: float = 1.5
     c2: float = 1.5
-    topology: str = "ring"
+    topology: str = "tri_neighborhood"
     neighborhood_k: int = 1
+    star_mode: str = "hub"
     inertia_schedule: str = "constant"
     w_start: float = 0.9
     w_end: float = 0.4
@@ -235,9 +244,161 @@ def topology_euclidean_knn(
     best_local = np.argmin(neighbor_fit, axis=1)
     return nearest[np.arange(n), best_local]
 
+def get_tri_neighborhood_slices(n_particles: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Divide de forma determinista los n_particles índices en 3 subconjuntos
+    estáticos balanceados: (indices_malla, indices_anillo, indices_estrella).
+    
+    Si n no es múltiplo exacto de 3, reparte el residuo equitativamente.
+    """
+    n_base = n_particles // 3
+    remainder = n_particles % 3
+    n_mesh = n_base + (1 if remainder >= 1 else 0)
+    n_ring = n_base + (1 if remainder >= 2 else 0)
+    n_star = n_base
+
+    idx = np.arange(n_particles, dtype=np.int64)
+    mesh_idx = idx[:n_mesh]
+    ring_idx = idx[n_mesh : n_mesh + n_ring]
+    star_idx = idx[n_mesh + n_ring :]
+    return mesh_idx, ring_idx, star_idx
+
+
+def compute_mesh_lbest(indices: np.ndarray, pbest_fit: np.ndarray) -> np.ndarray:
+    """Malla 2D (Grid Topology): Organiza las partículas del subgrupo en
+    una cuadrícula 2D (R x C) con vecindad tipo malla
+    (arriba, abajo, izquierda, derecha y la partícula misma).
+    
+    Retorna para cada partícula del subgrupo el índice global del mejor pbest
+    en su vecindario de malla."""
+    m = len(indices)
+    if m <= 1:
+        return indices.copy()
+
+    # Factorización R x C más cercana a una cuadrícula balanceada
+    r = int(np.floor(np.sqrt(m)))
+    while r > 1 and m % r != 0:
+        r -= 1
+    if r == 1 and m > 3:
+        r = int(np.floor(np.sqrt(m)))
+        c = int(np.ceil(m / r))
+    else:
+        c = m // r
+
+    sub_fits = pbest_fit[indices]
+    best_locals = np.empty(m, dtype=np.int64)
+
+    for i in range(m):
+        row = (i // c) % r
+        col = i % c
+        # 5 vecinos de malla con condiciones periódicas
+        neighbors = [
+            i,                                          # Centro (ella misma)
+            (((row - 1) % r) * c + col) % m,            # Norte
+            (((row + 1) % r) * c + col) % m,            # Sur
+            (row * c + ((col - 1) % c)) % m,            # Oeste
+            (row * c + ((col + 1) % c)) % m,            # Este
+        ]
+        best_n = neighbors[int(np.argmin(sub_fits[neighbors]))]
+        best_locals[i] = indices[best_n]
+
+    return best_locals
+
+
+def compute_ring_lbest(indices: np.ndarray, pbest_fit: np.ndarray, k: int = 1) -> np.ndarray:
+    """Anillo 1D (Ring Topology): Organiza las partículas del subgrupo en
+    una cadena circular donde cada partícula se comunica con sus k vecinos
+    a la izquierda y derecha (índices módulo m)."""
+    m = len(indices)
+    if m <= 1:
+        return indices.copy()
+    k_eff = max(1, min(k, (m - 1) // 2))
+    sub_fits = pbest_fit[indices]
+    offsets = np.arange(-k_eff, k_eff + 1)
+    neighbor_local = (np.arange(m)[:, None] + offsets[None, :]) % m
+    best_local_pos = np.argmin(sub_fits[neighbor_local], axis=1)
+    best_local_idx = neighbor_local[np.arange(m), best_local_pos]
+    return indices[best_local_idx]
+
+
+def compute_star_lbest(indices: np.ndarray, pbest_fit: np.ndarray, mode: str = "hub") -> np.ndarray:
+    """Estrella (Star Topology):
+    - Modo 'hub' (Star / Wheel formal de teoría de redes):
+      El nodo 0 es el hub central conectado con todas las partículas.
+      Las partículas periféricas (i > 0) se conectan al hub y a sí mismas.
+    - Modo 'clique':
+      Todas las partículas del subgrupo se comunican entre sí (gbest local al subgrupo)."""
+    m = len(indices)
+    if m <= 1:
+        return indices.copy()
+
+    sub_fits = pbest_fit[indices]
+    if mode == "clique":
+        best_in_star = indices[int(np.argmin(sub_fits))]
+        return np.full(m, best_in_star, dtype=np.int64)
+
+    # Modo 'hub':
+    best_locals = np.empty(m, dtype=np.int64)
+    hub_best_local = int(np.argmin(sub_fits))
+    best_locals[0] = indices[hub_best_local]
+
+    hub_fit = sub_fits[0]
+    for i in range(1, m):
+        if sub_fits[i] <= hub_fit:
+            best_locals[i] = indices[i]
+        else:
+            best_locals[i] = indices[0]
+
+    return best_locals
+
+
+def topology_tri_neighborhood(
+    positions: np.ndarray, pbest_pos: np.ndarray, pbest_fit: np.ndarray, config: PSOConfig
+) -> np.ndarray:
+    """Divide la población en 3 vecindarios estáticos en la misma ejecución:
+    - Malla (Grid / Von Neumann 2D): balance explotación/exploración.
+    - Anillo (Ring 1D con k vecinos): alta preservación de diversidad.
+    - Estrella (Star / Wheel): rápida difusión y explotación centralizada.
+    
+    Cada partícula busca su lbest exclusivamente dentro de su estructura de vecindario."""
+    n = len(pbest_fit)
+    mesh_idx, ring_idx, star_idx = get_tri_neighborhood_slices(n)
+
+    lbest_idx = np.empty(n, dtype=np.int64)
+    if len(mesh_idx) > 0:
+        lbest_idx[mesh_idx] = compute_mesh_lbest(mesh_idx, pbest_fit)
+    if len(ring_idx) > 0:
+        lbest_idx[ring_idx] = compute_ring_lbest(ring_idx, pbest_fit, k=config.neighborhood_k)
+    if len(star_idx) > 0:
+        lbest_idx[star_idx] = compute_star_lbest(star_idx, pbest_fit, mode=config.star_mode)
+
+    return lbest_idx
+
+
+def topology_mesh(
+    positions: np.ndarray, pbest_pos: np.ndarray, pbest_fit: np.ndarray, config: PSOConfig
+) -> np.ndarray:
+    """Malla 2D (Grid / Von Neumann) para todo el enjambre."""
+    indices = np.arange(len(pbest_fit), dtype=np.int64)
+    return compute_mesh_lbest(indices, pbest_fit)
+
+
+def topology_star(
+    positions: np.ndarray, pbest_pos: np.ndarray, pbest_fit: np.ndarray, config: PSOConfig
+) -> np.ndarray:
+    """Estrella (Star / Wheel) para todo el enjambre."""
+    indices = np.arange(len(pbest_fit), dtype=np.int64)
+    return compute_star_lbest(indices, pbest_fit, mode=config.star_mode)
+
+
 # Listado de estrategias de la Topología
 TOPOLOGIES: dict[str, NeighborhoodTopology] = {
+    "tri_neighborhood": topology_tri_neighborhood,
+    "mesh_ring_star": topology_tri_neighborhood,
+    "mesh": topology_mesh,
+    "grid": topology_mesh,
     "ring": topology_ring,
+    "star": topology_star,
+    "wheel": topology_star,
     "global": topology_global,
     "euclidean_knn": topology_euclidean_knn,
 }
@@ -425,6 +586,8 @@ class RunResult:
     convergence_mean: list[float] = field(default_factory=list)   # fitness medio del enjambre por iteración
     diversity_history: list[float] = field(default_factory=list)  # diversidad euclidiana por iteración
     stopped_reason: str = ""
+    subswarm_bests: dict[str, list[float]] = field(default_factory=dict)  # mejor por iteración en cada vecindario
+    best_neighborhood: str = ""  # vecindario que aportó el mejor óptimo ("Malla", "Anillo", "Estrella")
 
 
 IterationCallback = Callable[[int, np.ndarray, np.ndarray], None]
@@ -482,6 +645,17 @@ class PSO:
         convergence_mean: list[float] = []
         diversity_history: list[float] = []
 
+        # Rastreo de subvecindarios si la topología divide la población
+        is_tri = cfg.topology in ("tri_neighborhood", "mesh_ring_star")
+        mesh_idx, ring_idx, star_idx = (
+            get_tri_neighborhood_slices(n) if is_tri else (np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64))
+        )
+        subswarm_bests: dict[str, list[float]] = {
+            "mesh": [],
+            "ring": [],
+            "star": [],
+        } if is_tri else {}
+
         # Contador de Iteraciones
         iteration = 0
         stopped_reason = "max_iterations" # Razón de paro por defecto en iteraciones 
@@ -492,6 +666,11 @@ class PSO:
             convergence_best.append(float(pbest_fit[g_idx])) # Mejor fitness
             convergence_mean.append(float(fitness.mean())) # Guardamos la media de la conversión
             diversity_history.append(swarm_diversity_euclidean(positions, self.bounds_arr)) # Guardamos en el historial la diversidad
+
+            if is_tri:
+                subswarm_bests["mesh"].append(float(np.min(pbest_fit[mesh_idx])))
+                subswarm_bests["ring"].append(float(np.min(pbest_fit[ring_idx])))
+                subswarm_bests["star"].append(float(np.min(pbest_fit[star_idx])))
 
             # Función auxiliar para captura de snapshots y logs
             if callback is not None:
@@ -530,6 +709,15 @@ class PSO:
             iteration += 1 # Aumentamos el contador de generaciones
 
         g_idx = int(np.argmin(pbest_fit)) # obtenemos el mejor de la corrida
+        best_neighborhood = ""
+        if is_tri:
+            if g_idx in mesh_idx:
+                best_neighborhood = "Malla"
+            elif g_idx in ring_idx:
+                best_neighborhood = "Anillo"
+            else:
+                best_neighborhood = "Estrella"
+
         return RunResult( # Retornamos los resultados
             best_x=pbest_pos[g_idx].copy(),
             best_fitness=float(pbest_fit[g_idx]),
@@ -538,6 +726,8 @@ class PSO:
             convergence_mean=convergence_mean,
             diversity_history=diversity_history,
             stopped_reason=stopped_reason,
+            subswarm_bests=subswarm_bests,
+            best_neighborhood=best_neighborhood,
         )
 
 

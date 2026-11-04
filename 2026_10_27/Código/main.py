@@ -35,15 +35,18 @@ Orquesta la Actividad 5 (PSO) en dos modos:
             - Gráfica de diversidad euclidiana vs. iteración (extra).
 
 Para modificar en vivo (evaluación presencial), basta cambiar un flag:
-    --topology global | ring | euclidean_knn      (--neighborhood-k)
+    --topology tri_neighborhood | mesh | ring | star | global | euclidean_knn
+        tri_neighborhood (default): divide la población en 3 vecindarios
+        estáticos (Malla, Anillo y Estrella) en la misma ejecución.
+        --star-mode hub | clique: variante de la topología estrella.
     --inertia-schedule constant | linear_decay    (--w, --w-start, --w-end)
     --boundary-handling clip | reflect | random_reset
     Todos solo modifican PSOConfig; pso.PSO no requiere otros cambios.
 
 Uso:
+    python main.py --mode final --runs 30   # Corrida con los 3 vecindarios estáticos en la misma prueba
+    python main.py --mode final --runs 5    # Corrida rápida de prueba
     python main.py --mode tuning
-    python main.py --mode final --swarm-size 40 --w 0.7 --c1 1.5 --c2 1.5
-    python main.py --mode final --runs 5   # corrida rápida de prueba
 """
 
 # Importaciones necesarias
@@ -67,6 +70,7 @@ from pso import (
     PSOConfig,
     ProblemSpec,
     RunResult,
+    get_tri_neighborhood_slices,
     is_success,
     make_michalewicz,
     make_rosenbrock,
@@ -126,6 +130,7 @@ def config_from_args(args: argparse.Namespace, **overrides) -> PSOConfig:
         c2=args.c2,
         topology=args.topology,
         neighborhood_k=args.neighborhood_k,
+        star_mode=getattr(args, "star_mode", "hub"),
         inertia_schedule=args.inertia_schedule,
         w_start=args.w_start,
         w_end=args.w_end,
@@ -142,8 +147,11 @@ def config_from_args(args: argparse.Namespace, **overrides) -> PSOConfig:
 # Función para impresiones de hiperparámetros
 def config_label(cfg: PSOConfig) -> str:
     w_txt = f"w={cfg.w}" if cfg.inertia_schedule == "constant" else f"w:{cfg.w_start}->{cfg.w_end}"
-    return (f"N={cfg.swarm_size}, {w_txt}, c1={cfg.c1}, c2={cfg.c2}, topología={cfg.topology}"
-            f"(k={cfg.neighborhood_k}), fronteras={cfg.boundary_handling}")
+    if cfg.topology in ("tri_neighborhood", "mesh_ring_star"):
+        top_txt = f"topología=3-vecindarios estáticos [Malla + Anillo(k={cfg.neighborhood_k}) + Estrella({cfg.star_mode})]"
+    else:
+        top_txt = f"topología={cfg.topology}(k={cfg.neighborhood_k})"
+    return (f"N={cfg.swarm_size}, {w_txt}, c1={cfg.c1}, c2={cfg.c2}, {top_txt}, fronteras={cfg.boundary_handling}")
 
 
 """
@@ -322,15 +330,29 @@ def export_stats_csv(rows: list[StatsRow], path: str) -> None:
 
 # Gráfica de la convergencia
 def plot_convergence(problem: ProblemSpec, runs: list[RunResult], path: str, label: str) -> None:
-    """Mejor global promedio y fitness medio del enjambre promedio vs. iteración."""
+    """Mejor global promedio, fitness medio del enjambre y (si aplica)
+    convergencia promedio por vecindario estático (Malla, Anillo, Estrella)."""
     best_curve = mean_curve(runs, "convergence_best")
     mean_curve_swarm = mean_curve(runs, "convergence_mean")
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.plot(best_curve, linewidth=1.8, label="Mejor global (promedio de corridas)")
-    ax.plot(mean_curve_swarm, linewidth=1.5, linestyle="--", label="Fitness medio del enjambre (promedio de corridas)")
+    ax.plot(best_curve, linewidth=2.0, color="#111111", label="Mejor global (promedio de corridas)")
+
+    # Si se ejecutó la topología con 3 vecindarios estáticos, graficar cada uno
+    has_subswarms = runs and bool(runs[0].subswarm_bests)
+    if has_subswarms:
+        def mean_subswarm_curve(key: str) -> np.ndarray:
+            curves = [r.subswarm_bests[key] for r in runs if key in r.subswarm_bests]
+            max_len = max(len(c) for c in curves)
+            return np.array([c + [c[-1]] * (max_len - len(c)) for c in curves]).mean(axis=0)
+
+        ax.plot(mean_subswarm_curve("mesh"), linewidth=1.4, linestyle="-.", color="#1f77b4", alpha=0.9, label="Vecindario Malla (promedio)")
+        ax.plot(mean_subswarm_curve("ring"), linewidth=1.4, linestyle="--", color="#ff7f0e", alpha=0.9, label="Vecindario Anillo (promedio)")
+        ax.plot(mean_subswarm_curve("star"), linewidth=1.4, linestyle=":", color="#2ca02c", alpha=0.9, label="Vecindario Estrella (promedio)")
+
+    ax.plot(mean_curve_swarm, linewidth=1.2, linestyle="--", color="#7f7f7f", alpha=0.7, label="Fitness medio del enjambre (promedio)")
     if problem.known_optimum is not None:
-        ax.axhline(problem.known_optimum, color="black", linestyle=":", linewidth=1, label="Óptimo global")
+        ax.axhline(problem.known_optimum, color="red", linestyle=":", linewidth=1, label=f"Óptimo global ({problem.known_optimum:.4f})")
     if min(best_curve.min(), mean_curve_swarm.min()) > 0:
         ax.set_yscale("log")
     ax.set_xlabel("Iteración")
@@ -367,9 +389,15 @@ def capture_snapshots(problem: ProblemSpec, config: PSOConfig, seed: int) -> lis
 
 # Graficar la distribución espacial
 def plot_spatial_distribution(
-    problem: ProblemSpec, snapshots: list[tuple[int, np.ndarray]], path: str, label: str
+    problem: ProblemSpec, snapshots: list[tuple[int, np.ndarray]], path: str, label: str, config: PSOConfig | None = None
 ) -> None:
-    """Scatter de las partículas en 3 momentos sobre el contorno de la función."""
+    """Scatter de las partículas en 3 momentos sobre el contorno de la función.
+    Si la población está dividida en los 3 vecindarios estáticos, se diferencian
+    visualmente por color y marcador:
+      - Malla: Cuadrados azules
+      - Anillo: Círculos naranjas
+      - Estrella: Triángulos verdes
+    """
     (x_lo, x_hi), (y_lo, y_hi) = problem.bounds[0], problem.bounds[1]
     xs, ys = np.linspace(x_lo, x_hi, 300), np.linspace(y_lo, y_hi, 300)
     xx, yy = np.meshgrid(xs, ys)
@@ -379,6 +407,8 @@ def plot_spatial_distribution(
     use_log = zz.min() >= 0
     z_plot = np.log10(zz + 1.0) if use_log else zz
     cbar_label = "log10(f + 1)" if use_log else "f(x, y)"
+
+    is_tri = config is not None and config.topology in ("tri_neighborhood", "mesh_ring_star")
 
     titles = ["Generación inicial", "Generación intermedia", "Generación final"]
     fig, axes = plt.subplots(1, 3, figsize=(19, 6), sharex=True, sharey=True)
@@ -390,8 +420,19 @@ def plot_spatial_distribution(
         if problem.optimum_position is not None:
             ax.scatter(*problem.optimum_position[:2], marker="*", c="gold", edgecolors="black",
                        s=420, zorder=4, label="Óptimo global")
-        ax.scatter(pos[:, 0], pos[:, 1], c="red", edgecolors="white", s=22, linewidths=0.5, zorder=6,
-                   label="Partículas")
+
+        if is_tri:
+            m_idx, r_idx, s_idx = get_tri_neighborhood_slices(len(pos))
+            ax.scatter(pos[m_idx, 0], pos[m_idx, 1], c="#1f77b4", marker="s", edgecolors="white",
+                       s=32, linewidths=0.5, zorder=6, label="Malla (Grid)")
+            ax.scatter(pos[r_idx, 0], pos[r_idx, 1], c="#ff7f0e", marker="o", edgecolors="white",
+                       s=32, linewidths=0.5, zorder=6, label="Anillo (Ring)")
+            ax.scatter(pos[s_idx, 0], pos[s_idx, 1], c="#2ca02c", marker="^", edgecolors="white",
+                       s=40, linewidths=0.5, zorder=6, label="Estrella (Star)")
+        else:
+            ax.scatter(pos[:, 0], pos[:, 1], c="red", edgecolors="white", s=22, linewidths=0.5, zorder=6,
+                       label="Partículas")
+
         ax.set_title(f"{title} (iteración {it})")
         ax.set_xlabel("x")
         ax.set_xlim(x_lo, x_hi)
@@ -415,7 +456,7 @@ def run_final(args: argparse.Namespace) -> None:
     print("Actividad 5 - Optimización por Enjambre de Partículas (modo FINAL)")
     print(f"Corridas por función: {args.runs}")
     print(label)
-    print("=" * 78)
+    print("=" * 78) 
 
     os.makedirs(args.output_dir, exist_ok=True) # Carpeta de exportación
     stats_rows: list[StatsRow] = [] # Estadísticas
@@ -434,8 +475,14 @@ def run_final(args: argparse.Namespace) -> None:
         print(f"Corrida dedicada para distribución espacial de {problem.name} (semilla={viz_seed})")
         snapshots = capture_snapshots(problem, config, viz_seed) # Captura de snapshots
         plot_spatial_distribution( # Graficar distribución espacial de la snapshot
-            problem, snapshots, os.path.join(args.output_dir, f"distribucion_espacial_{key}.png"), label
+            problem, snapshots, os.path.join(args.output_dir, f"distribucion_espacial_{key}.png"), label, config=config
         )
+
+        if runs and runs[0].best_neighborhood:
+            from collections import Counter
+            counts = Counter(r.best_neighborhood for r in runs)
+            print(f"  Aporte por vecindario ganador en {problem.name}: " +
+                  ", ".join(f"{k}: {v}/{len(runs)} ({v/len(runs):.0%})" for k, v in counts.items()))
 
     print_stats_table(stats_rows) # Impresión de estadísticas
     export_stats_csv(stats_rows, os.path.join(args.output_dir, "tabla_estadistica_pso.csv")) # Exportar estadísticas
@@ -455,8 +502,16 @@ def parse_args() -> argparse.Namespace:
     # Comunes
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--max-iterations", type=int, default=300)
-    p.add_argument("--topology", type=str, default="ring", choices=["ring", "global", "euclidean_knn"])
-    p.add_argument("--neighborhood-k", type=int, default=1)
+    p.add_argument(
+        "--topology",
+        type=str,
+        default="tri_neighborhood",
+        choices=["tri_neighborhood", "mesh_ring_star", "mesh", "grid", "ring", "star", "wheel", "global", "euclidean_knn"],
+        help="Estrategia de topología. Por defecto 'tri_neighborhood' divide la población en Malla, Anillo y Estrella en la misma corrida.",
+    )
+    p.add_argument("--neighborhood-k", type=int, default=1, help="Vecinos por lado en anillo (k=1 -> 3 vecinos)")
+    p.add_argument("--star-mode", type=str, default="hub", choices=["hub", "clique"],
+                   help="Variante de topología estrella: 'hub' (nodo central / wheel) o 'clique' (gbest local)")
     p.add_argument("--inertia-schedule", type=str, default="constant", choices=["constant", "linear_decay"])
     p.add_argument("--w-start", type=float, default=0.9)
     p.add_argument("--w-end", type=float, default=0.4)
@@ -470,7 +525,8 @@ def parse_args() -> argparse.Namespace:
 
     # Parámetros del enjambre (modo final; en tuning son la base)
     p.add_argument("--runs", type=int, default=N_RUNS_FINAL_DEFAULT)
-    p.add_argument("--swarm-size", type=int, default=40)
+    p.add_argument("--swarm-size", type=int, default=48,
+                   help="Número de partículas (por defecto 48 = 16 Malla [4x4], 16 Anillo, 16 Estrella)")
     p.add_argument("--w", type=float, default=0.7)
     p.add_argument("--c1", type=float, default=1.5)
     p.add_argument("--c2", type=float, default=1.5)
