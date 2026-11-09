@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Harmony Search: de la improvisación al código</title>
+<style>
+:root{--bg:#f1e6cc;--card:#faf4e3;--fg:#2b1d14;--mut:#6b5a48;--mem:#3b4a6b;--adj:#4f7060;--rnd:#8b2d3a;--line:#d8c79d;--code:#2b1d14;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1d1611;--card:#2a2019;--fg:#f1e6cf;--mut:#b9a88f;--mem:#8aa0d6;--adj:#7fb597;--rnd:#e0707f;--line:#4a3a2c;--code:#120d09}}
+:root[data-theme="dark"]{--bg:#1d1611;--card:#2a2019;--fg:#f1e6cf;--mut:#b9a88f;--mem:#8aa0d6;--adj:#7fb597;--rnd:#e0707f;--line:#4a3a2c;--code:#120d09}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 Cambria,Georgia,serif}
+main{max-width:1100px;margin:0 auto;padding:16px}
+h1{font-size:1.6rem;margin:.1em 0 .2em}
+.mut{color:var(--mut);margin:0 0 12px}
+.wrap{display:flex;flex-wrap:wrap;gap:16px}
+.col{flex:1 1 420px;min-width:0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px}
+canvas{width:100%;max-width:480px;aspect-ratio:1;border-radius:8px;display:block;margin:0 auto}
+.ui{font-family:system-ui,sans-serif;font-size:.88rem}
+.sl{display:grid;grid-template-columns:62px 1fr 42px;gap:8px;align-items:center;margin:4px 0}
+.btns{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+button{font:inherit;font-family:system-ui,sans-serif;font-size:.88rem;padding:8px 12px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
+button.p{background:#3b4a6b;border-color:#3b4a6b;color:#fff}
+button:focus-visible,input:focus-visible{outline:2px solid #c9972b;outline-offset:2px}
+pre{background:var(--code);color:#f3e7c9;border-radius:10px;padding:10px 0;margin:0;overflow-x:auto;font:12.5px/1.65 ui-monospace,Menlo,Consolas,monospace}
+pre div{padding:0 12px;white-space:pre}
+pre div.on{background:#c9972b33;box-shadow:inset 3px 0 #c9972b}
+.cm{color:#c9972b}
+#log{max-height:150px;overflow:auto}
+#log div{padding:3px 8px;border-left:4px solid var(--line);margin-bottom:2px}
+#log .mem{border-color:var(--mem)}#log .adj{border-color:var(--adj)}#log .rnd{border-color:var(--rnd)}
+.tw{max-height:170px;overflow:auto}
+table{border-collapse:collapse;width:100%}td,th{padding:2px 8px;text-align:right}
+tr.w{color:var(--rnd);font-weight:700}tr.b{color:var(--adj);font-weight:700}
+.lg span{display:inline-flex;align-items:center;gap:5px;margin-right:12px}
+.lg i{width:11px;height:11px;border-radius:50%;display:inline-block}
+</style></head><body><main>
+<h1>Harmony Search: de la improvisación al código</h1>
+<p class="mut">Cada punto es una armonía (x₁, x₂) de la memoria. El fondo es Rastrigin 2D en [−5.12, 5.12]²; el óptimo (0, 0) está marcado con una cruz.</p>
+<div class="wrap">
+<section class="col">
+ <div class="card"><canvas id="cv" width="480" height="480" aria-label="Memoria armónica sobre la función Rastrigin"></canvas>
+  <p class="ui lg" style="margin:10px 0 4px"><span><i style="background:#2f4a8a"></i>de la memoria</span><span><i style="background:#1f8a4f"></i>ajuste de tono</span><span><i style="background:#c0283a"></i>al azar</span></p>
+  <p class="ui mut" style="margin:0">Punto dorado: mejor armonía. Aro rojo: la peor, la que se reemplaza.</p></div>
+ <div class="card ui"><div id="st" style="margin-bottom:6px"></div><div class="tw"><table id="tb"></table></div></div>
+</section>
+<section class="col">
+ <div class="card ui">
+  <div class="sl"><label for="hms">HMS</label><input type="range" id="hms" min="4" max="20" step="1" value="6"><b id="v_hms"></b></div>
+  <div class="sl"><label for="hmcr">HMCR</label><input type="range" id="hmcr" min="0.5" max="0.99" step="0.01" value="0.9"><b id="v_hmcr"></b></div>
+  <div class="sl"><label for="par">PAR</label><input type="range" id="par" min="0" max="1" step="0.05" value="0.3"><b id="v_par"></b></div>
+  <div class="sl"><label for="bw">bw</label><input type="range" id="bw" min="0.005" max="0.2" step="0.005" value="0.05"><b id="v_bw"></b></div>
+  <div class="btns"><button class="p" id="b1">Siguiente paso</button><button id="b2">Una improvisación</button><button id="b3">×50</button><button id="b4">▶ Auto</button><button id="b5">Reiniciar</button></div>
+ </div>
+ <div class="card"><pre id="code" aria-label="Código de Harmony Search"></pre></div>
+ <div class="card ui"><div id="log"></div></div>
+</section></div></main>
+<script>
+const L=-5.12,U=5.12,R=U-L,S=480,$=id=>document.getElementById(id);
+const f=(x,y)=>20+x*x+y*y-10*(Math.cos(2*Math.PI*x)+Math.cos(2*Math.PI*y));
+const rnd=(a,b)=>a+Math.random()*(b-a);
+const px=x=>(x-L)/R*S,py=y=>(U-y)/R*S;
+const cx=$('cv').getContext('2d');
+const lines=[
+"HM = rng.uniform(lower, upper, (hms, dim))",
+"costos = np.array([f(h) for h in HM])",
+"for _ in range(n_iter):",
+"  nueva = np.empty(dim)",
+"  for j in range(dim):",
+"    if rng.random() &lt; hmcr:          <span class=cm># memoria</span>",
+"      nueva[j] = HM[rng.integers(hms), j]",
+"      if rng.random() &lt; par:        <span class=cm># ajuste</span>",
+"        nueva[j] = np.clip(nueva[j] + rng.uniform(-1,1)*bw*rango, lower, upper)",
+"    else:                            <span class=cm># azar</span>",
+"      nueva[j] = rng.uniform(lower, upper)",
+"  peor = np.argmax(costos)           <span class=cm># actualizar</span>",
+"  fn = f(nueva)",
+"  if fn &lt; costos[peor]:",
+"    HM[peor], costos[peor] = nueva, fn"];
+$('code').innerHTML=lines.map((t,i)=>`<div id="l${i}">${t}</div>`).join('');
+let cl=-1,kind='';
+function hl(n){if(cl>=0)$('l'+cl).classList.remove('on');cl=n;$('l'+n).classList.add('on');kind={5:'mem',6:'mem',7:'adj',8:'adj',10:'rnd'}[n]||''}
+const heat=document.createElement('canvas');heat.width=heat.height=120;
+{const c=heat.getContext('2d'),im=c.createImageData(120,120);
+ for(let y=0;y<120;y++)for(let x=0;x<120;x++){const t=Math.min(1,f(L+R*x/119,U-R*y/119)/70),k=(y*120+x)*4;
+  im.data[k]=245-t*150;im.data[k+1]=232-t*165;im.data[k+2]=200-t*150;im.data[k+3]=255}
+ c.putImageData(im,0,0)}
+let HM,C,it,gen,cur,timer;
+const P=()=>({hms:+$('hms').value,hmcr:+$('hmcr').value,par:+$('par').value,bw:+$('bw').value});
+function reset(){const p=P();HM=Array.from({length:p.hms},()=>[rnd(L,U),rnd(L,U)]);C=HM.map(h=>f(h[0],h[1]));it=0;gen=null;cur=null;$('log').innerHTML='';hl(1);draw();stats()}
+function* improv(){
+ const p=P();cur={n:[null,null],k:[],src:[]};
+ hl(3);yield 'Nueva improvisación: se empieza con una armonía vacía.';
+ for(let j=0;j<2;j++){
+  const r=Math.random();hl(5);
+  yield `x${j+1}: r = ${r.toFixed(2)} ${r<p.hmcr?'<':'≥'} HMCR (${p.hmcr}) → ${r<p.hmcr?'toma una nota de la memoria':'inventa una nota'}`;
+  if(r<p.hmcr){
+   const i=Math.floor(Math.random()*p.hms);let v=HM[i][j];cur.src[j]=i;cur.n[j]=v;cur.k[j]='mem';hl(6);
+   yield `Elige la armonía #${i+1} al azar y copia x${j+1} = ${v.toFixed(2)}`;
+   const r2=Math.random();hl(7);
+   yield `r = ${r2.toFixed(2)} ${r2<p.par?'<':'≥'} PAR (${p.par}) → ${r2<p.par?'ajusta el tono':'sin ajuste'}`;
+   if(r2<p.par){const d=rnd(-1,1)*p.bw*R;v=Math.min(U,Math.max(L,v+d));cur.n[j]=v;cur.k[j]='adj';hl(8);
+    yield `Ajuste ${d>=0?'+':''}${d.toFixed(2)} → x${j+1} = ${v.toFixed(2)}`}
+  }else{const v=rnd(L,U);cur.n[j]=v;cur.k[j]='rnd';hl(10);yield `Nota nueva en todo el rango: x${j+1} = ${v.toFixed(2)}`}
+ }
+ const fn=f(cur.n[0],cur.n[1]),w=C.indexOf(Math.max(...C));
+ hl(11);yield `La peor de la memoria es la #${w+1}, con f = ${C[w].toFixed(2)}`;
+ hl(12);yield `Evalúa la nueva armonía: f = ${fn.toFixed(2)}`;
+ const rep=fn<C[w];it++;hl(13);
+ yield `${fn.toFixed(2)} ${rep?'<':'≥'} ${C[w].toFixed(2)} → ${rep?'mejora a la peor':'se descarta'}`;
+ if(rep){HM[w]=cur.n.slice();C[w]=fn;hl(14);yield `Reemplaza la armonía #${w+1} en la memoria`}
+}
+function say(m){const d=document.createElement('div');d.className=kind;d.textContent=m;$('log').prepend(d)}
+function step(){if(!gen)gen=improv();const r=gen.next();if(r.done){gen=null;return step()}say(r.value);draw();stats()}
+function full(){if(!gen)gen=improv();let m;for(;;){const r=gen.next();if(r.done){gen=null;break}m=r.value}return m}
+function stats(){const mn=Math.min(...C),mx=Math.max(...C);
+ $('st').textContent=`Improvisaciones: ${it} · mejor f = ${mn.toFixed(4)} · peor f = ${mx.toFixed(2)}`;
+ $('tb').innerHTML='<tr><th>#</th><th>x₁</th><th>x₂</th><th>f(x)</th></tr>'+HM.map((h,i)=>`<tr class="${C[i]==mx?'w':C[i]==mn?'b':''}"><td>${i+1}</td><td>${h[0].toFixed(2)}</td><td>${h[1].toFixed(2)}</td><td>${C[i].toFixed(2)}</td></tr>`).join('')}
+function draw(){
+ const g=cx,K={mem:'#2f4a8a',adj:'#1f8a4f',rnd:'#c0283a'},mn=Math.min(...C),mx=Math.max(...C);
+ g.setLineDash([]);g.drawImage(heat,0,0,S,S);
+ g.strokeStyle='#2b1d14';g.lineWidth=2;g.beginPath();g.moveTo(px(0)-7,py(0)-7);g.lineTo(px(0)+7,py(0)+7);g.moveTo(px(0)+7,py(0)-7);g.lineTo(px(0)-7,py(0)+7);g.stroke();
+ HM.forEach((h,i)=>{g.beginPath();g.arc(px(h[0]),py(h[1]),6,0,7);g.fillStyle=C[i]==mn?'#e0a800':'#2b1d14';g.fill();
+  g.lineWidth=C[i]==mx?3:1.5;g.strokeStyle=C[i]==mx?K.rnd:'#fff';g.stroke()});
+ if(!cur)return;
+ cur.src.forEach(i=>{if(i!=null){g.beginPath();g.arc(px(HM[i][0]),py(HM[i][1]),11,0,7);g.strokeStyle=K.mem;g.lineWidth=2.5;g.stroke()}});
+ if(cur.n[0]!=null){g.setLineDash([5,4]);g.lineWidth=2;g.strokeStyle=K[cur.k[0]];g.beginPath();g.moveTo(px(cur.n[0]),0);g.lineTo(px(cur.n[0]),S);g.stroke();
+  if(cur.n[1]!=null){g.strokeStyle=K[cur.k[1]];g.beginPath();g.moveTo(0,py(cur.n[1]));g.lineTo(S,py(cur.n[1]));g.stroke();g.setLineDash([]);
+   g.beginPath();g.arc(px(cur.n[0]),py(cur.n[1]),8,0,7);g.fillStyle='#fff';g.fill();g.strokeStyle='#2b1d14';g.lineWidth=2.5;g.stroke()}
+  g.setLineDash([])}}
+function upd(e){['hms','hmcr','par','bw'].forEach(k=>$('v_'+k).textContent=$(k).value);if(e&&e.target.id=='hms')reset()}
+document.querySelectorAll('input[type=range]').forEach(i=>i.addEventListener('input',upd));
+$('b1').onclick=step;
+$('b2').onclick=()=>{say(full());draw();stats()};
+$('b3').onclick=()=>{let m;for(let i=0;i<50;i++)m=full();say('×50 improvisaciones · '+m);draw();stats()};
+$('b4').onclick=e=>{if(timer){clearInterval(timer);timer=null;e.target.textContent='▶ Auto'}else{timer=setInterval(step,300);e.target.textContent='⏸ Pausa'}};
+$('b5').onclick=reset;
+upd();reset();
+</script></body></html>
